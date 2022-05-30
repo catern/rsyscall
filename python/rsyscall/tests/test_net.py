@@ -58,7 +58,7 @@ class TestNet(TrioTestCase):
         await self.process.exit(0)
 
     async def test_setns_ownership(self) -> None:
-        netnsfd = await self.process.task.open(await self.process.ram.ptr("/proc/self/ns/net"), O.RDONLY)
+        netnsfd = await self.process.task.open(await self.process.task.ptr("/proc/self/ns/net"), O.RDONLY)
         process = await self.process.clone(CLONE.FILES)
         await process.unshare_user()
         with self.assertRaises(PermissionError):
@@ -67,9 +67,9 @@ class TestNet(TrioTestCase):
 
     async def test_ioctl(self) -> None:
         await self.process.unshare(CLONE.NEWNET)
-        tun_fd = await self.process.task.open(await self.process.ram.ptr("/dev/net/tun"), O.RDWR)
+        tun_fd = await self.process.task.open(await self.process.task.ptr("/dev/net/tun"), O.RDWR)
         name = 'tun0'
-        ptr = await self.process.ram.ptr(Ifreq(name, flags=IFF.TUN))
+        ptr = await self.process.task.ptr(Ifreq(name, flags=IFF.TUN))
         await tun_fd.ioctl(TUNSETIFF, ptr)
         sock = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await sock.ioctl(SIOC.GIFINDEX, ptr)
@@ -90,17 +90,17 @@ class TestNet(TrioTestCase):
     async def test_rtnetlink(self) -> None:
         await self.process.unshare(CLONE.NEWNET)
         netsock = await self.process.task.socket(AF.NETLINK, SOCK.DGRAM, NETLINK.ROUTE)
-        await netsock.bind(await self.process.ram.ptr(SockaddrNl(0, RTMGRP.LINK)))
+        await netsock.bind(await self.process.task.ptr(SockaddrNl(0, RTMGRP.LINK)))
 
-        tun_fd = await self.process.task.open(await self.process.ram.ptr("/dev/net/tun"), O.RDWR)
-        ptr = await self.process.ram.ptr(Ifreq('tun0', flags=IFF.TUN))
+        tun_fd = await self.process.task.open(await self.process.task.ptr("/dev/net/tun"), O.RDWR)
+        ptr = await self.process.task.ptr(Ifreq('tun0', flags=IFF.TUN))
         await tun_fd.ioctl(TUNSETIFF, ptr)
         sock = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await sock.ioctl(SIOC.GIFINDEX, ptr)
         # this is the second interface in an empty netns
         self.assertEqual((await ptr.read()).ifindex, 2)
 
-        valid, _ = await netsock.read(await self.process.ram.malloc(bytes, 4096))
+        valid, _ = await netsock.read(await self.process.task.malloc(bytes, 4096))
         batch = IPBatch()
         evs = batch.marshal.parse(await valid.read())
         self.assertEqual(len(evs), 1)
@@ -142,7 +142,7 @@ class TestNetLocalPort(TrioTestCase):
             0, 0,
         )
         await self.process.unshare(CLONE.NEWNET)
-        local = await self.process.task.open(await self.process.ram.ptr("/proc/sys/net/ipv4/ip_local_port_range"), O.WRONLY)
+        local = await self.process.task.open(await self.process.task.ptr("/proc/sys/net/ipv4/ip_local_port_range"), O.WRONLY)
         await local.write(await self.process.ptr("40000 40000\n"))
         await local.close()
 
@@ -177,22 +177,22 @@ class TestNetLocalPort(TrioTestCase):
         "With STREAM sockets, even if you use SO.REUSEADDR, binding 0 twice will never give you the same port."
         sockfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await sockfd.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.process.ptr(Int32(1)))
-        await sockfd.bind(await self.process.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+        await sockfd.bind(await self.process.task.ptr(SockaddrIn(0, '127.0.0.1')))
 
         sockfd2 = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await sockfd2.setsockopt(SOL.SOCKET, SO.REUSEADDR, await self.process.ptr(Int32(1)))
         with self.assertRaises(OSError) as cm:
-            await sockfd2.bind(await self.process.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+            await sockfd2.bind(await self.process.task.ptr(SockaddrIn(0, '127.0.0.1')))
         self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
 
     async def test_dgram(self) -> None:
         "With DGRAM sockets, without SO.REUSEADDR, binding 0 twice will never give you the same port."
         sockfd = await self.process.task.socket(AF.INET, SOCK.DGRAM)
-        await sockfd.bind(await self.process.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+        await sockfd.bind(await self.process.task.ptr(SockaddrIn(0, '127.0.0.1')))
 
         sockfd2 = await self.process.task.socket(AF.INET, SOCK.DGRAM)
         with self.assertRaises(OSError) as cm:
-            await sockfd2.bind(await self.process.ram.ptr(SockaddrIn(0, '127.0.0.1')))
+            await sockfd2.bind(await self.process.task.ptr(SockaddrIn(0, '127.0.0.1')))
         self.assertEqual(cm.exception.errno, errno.EADDRINUSE)
 
     async def test_dgram_reuseaddr(self) -> None:

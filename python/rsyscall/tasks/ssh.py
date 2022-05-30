@@ -11,7 +11,6 @@ from rsyscall.epoller import Epoller, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, FileDescriptor, Task
 from rsyscall.thread import Process
 from rsyscall.loader import NativeLoader
-from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import ListeningConnection
 from rsyscall.path import Path
@@ -159,7 +158,7 @@ class SSHHost:
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
         name = (hostname+random_suffix+".sock")
         local_socket_path = process.environ.tmpdir/name
-        fd = await process.task.open(await process.ram.ptr(self.executables.bootstrap_path), O.RDONLY)
+        fd = await process.task.open(await process.task.ptr(self.executables.bootstrap_path), O.RDONLY)
         async with make_bootstrap_dir(process, ssh_to_host, fd) as tmp_path_bytes:
             return await ssh_bootstrap(process, ssh_to_host, local_socket_path, tmp_path_bytes)
 
@@ -181,7 +180,7 @@ async def make_bootstrap_dir(
 
     """
     stdout_pipe = await (await parent.task.pipe(
-        await parent.ram.malloc(Pipe))).read()
+        await parent.task.malloc(Pipe))).read()
     async_stdout = await parent.make_afd(stdout_pipe.read, set_nonblock=True)
     child = await parent.fork()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
@@ -212,7 +211,7 @@ async def ssh_forward(process: Process, ssh_command: SSHCommand,
                       local_path: Path, remote_path: str) -> AsyncChildPid:
     "Forward Unix socket connections to local_path to the socket at remote_path, over ssh"
     stdout_pipe = await (await process.task.pipe(
-        await process.ram.malloc(Pipe))).read()
+        await process.task.malloc(Pipe))).read()
     async_stdout = await process.make_afd(stdout_pipe.read, set_nonblock=True)
     child = await process.fork()
     await child.task.inherit_fd(stdout_pipe.write).dup2(child.stdout)
@@ -241,7 +240,7 @@ async def ssh_bootstrap(
 ) -> t.Tuple[AsyncChildPid, Process]:
     "Over ssh, run the bootstrap executable, "
     # identify local path
-    local_data_addr = await parent.ram.ptr(
+    local_data_addr = await parent.task.ptr(
         await SockaddrUn.from_path(parent, local_socket_path))
     # start port forwarding; we'll just leak this process, no big deal
     # TODO we shouldn't leak processes; we should be GCing processes at some point
@@ -285,26 +284,24 @@ async def ssh_bootstrap(
     )
     handle_remote_data_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.data_sock))
     handle_listening_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.listening_sock))
-    new_allocator = await memory.AllocatorClient.make_allocator(new_base_task)
+    new_base_task.allocator = await memory.AllocatorClient.make_allocator(new_base_task)
     # we don't inherit SignalMask; we assume ssh zeroes the sigmask before starting us
-    new_ram = RAM(new_base_task, new_allocator)
-    epoller = await Epoller.make_root(new_ram, new_base_task)
-    child_monitor = await ChildPidMonitor.make(new_ram, new_base_task, epoller)
+    epoller = await Epoller.make_root(new_base_task)
+    child_monitor = await ChildPidMonitor.make(new_base_task, epoller)
     await handle_listening_fd.fcntl(F.SETFL, O.NONBLOCK)
     connection = ListeningConnection(
-        parent.task, parent.ram, parent.epoller,
+        parent.task, parent.epoller,
         local_data_addr,
-        new_base_task, new_ram,
-        await AsyncFileDescriptor.make(epoller, new_ram, handle_listening_fd),
+        new_base_task,
+        await AsyncFileDescriptor.make(epoller, handle_listening_fd),
     )
     new_process = Process(
         task=new_base_task,
-        ram=new_ram,
         connection=connection,
         loader=NativeLoader.make_from_symbols(new_base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environ=Environment.make_from_environ(new_base_task, new_ram, environ),
+        environ=Environment.make_from_environ(new_base_task, environ),
         stdin=new_base_task.make_fd_handle(near.FileDescriptor(0)),
         stdout=new_base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=new_base_task.make_fd_handle(near.FileDescriptor(2)),
@@ -339,10 +336,10 @@ async def make_local_ssh_from_executables(process: Process,
     keygen_process = await process.fork()
     # ugh, we have to make a directory because ssh-keygen really wants to output to a directory
     async with (await mkdtemp(process)) as tmpdir:
-        await keygen_process.task.chdir(await keygen_process.ram.ptr(tmpdir))
+        await keygen_process.task.chdir(await keygen_process.task.ptr(tmpdir))
         await (await keygen_process.exec(keygen_command)).waitpid(W.EXITED)
-        privkey_file = await process.task.open(await process.ram.ptr(tmpdir/'key'), O.RDONLY)
-        pubkey_file = await process.task.open(await process.ram.ptr(tmpdir/'key.pub'), O.RDONLY)
+        privkey_file = await process.task.open(await process.task.ptr(tmpdir/'key'), O.RDONLY)
+        pubkey_file = await process.task.open(await process.task.ptr(tmpdir/'key.pub'), O.RDONLY)
     def to_host(ssh: SSHCommand, privkey_file=privkey_file, pubkey_file=pubkey_file) -> SSHCommand:
         privkey = privkey_file.as_proc_path()
         pubkey = pubkey_file.as_proc_path()

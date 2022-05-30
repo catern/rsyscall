@@ -47,8 +47,8 @@ class TestSSH(TrioTestCase):
     async def test_read(self) -> None:
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
         data = b"hello world"
-        await local_sock.write(await self.process.ram.ptr(data))
-        valid, _ = await remote_sock.read(await self.remote.ram.malloc(bytes, len(data)))
+        await local_sock.write(await self.process.task.ptr(data))
+        valid, _ = await remote_sock.read(await self.remote.task.malloc(bytes, len(data)))
         self.assertEqual(len(data), valid.size())
         self.assertEqual(data, await valid.read())
 
@@ -81,7 +81,7 @@ class TestSSH(TrioTestCase):
         await cat_side.dup2(process.stdout)
         child_pid = await process.exec(cat)
 
-        in_data = await self.process.ram.ptr(b"hello")
+        in_data = await self.process.task.ptr(b"hello")
         written, _ = await local_sock.write(in_data)
         valid, _ = await local_sock.read(written)
         self.assertEqual(in_data.value, await valid.read())
@@ -103,7 +103,7 @@ class TestSSH(TrioTestCase):
         remote_file = await self.remote.task.memfd_create(await self.remote.ptr("dest"))
 
         data = b'hello world'
-        await local_file.write(await self.process.ram.ptr(data))
+        await local_file.write(await self.process.task.ptr(data))
         await local_file.lseek(0, SEEK.SET)
 
         [(local_sock, remote_sock)] = await self.remote.open_channels(1)
@@ -118,7 +118,7 @@ class TestSSH(TrioTestCase):
         await remote_child.check()
 
         await remote_file.lseek(0, SEEK.SET)
-        read, _ = await remote_file.read(await self.remote.ram.malloc(bytes, len(data)))
+        read, _ = await remote_file.read(await self.remote.task.malloc(bytes, len(data)))
         self.assertEqual(await read.read(), data)
 
     async def test_sigmask_bug(self) -> None:
@@ -126,8 +126,8 @@ class TestSSH(TrioTestCase):
         await rsyscall.thread.do_cloexec_except(
             process, set([fd.near for fd in process.task.fd_handles]))
         await self.remote.task.sigprocmask((HowSIG.SETMASK,
-                                            await self.remote.ram.ptr(Sigset())),
-                                           await self.remote.ram.malloc(Sigset))
+                                            await self.remote.task.ptr(Sigset())),
+                                           await self.remote.task.malloc(Sigset))
         await self.remote.task.read_oldset_and_check()
 
     async def test_nix_deploy(self) -> None:

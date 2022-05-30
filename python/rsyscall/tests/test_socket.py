@@ -19,7 +19,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen(self) -> None:
         sockfd = await self.process.task.socket(AF.UNIX, SOCK.STREAM)
-        addr = await self.process.ram.ptr(await SockaddrUn.from_path(self.process, self.tmpdir/"sock"))
+        addr = await self.process.task.ptr(await SockaddrUn.from_path(self.process, self.tmpdir/"sock"))
         await sockfd.bind(addr)
         await sockfd.listen(10)
 
@@ -29,7 +29,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async(self) -> None:
         sockfd = await self.process.make_afd(await self.process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        addr = await self.process.ram.ptr(await SockaddrUn.from_path(self.process, self.tmpdir/"sock"))
+        addr = await self.process.task.ptr(await SockaddrUn.from_path(self.process, self.tmpdir/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -43,7 +43,7 @@ class TestSocket(TrioTestCase):
 
     async def test_listen_async_accept(self) -> None:
         sockfd = await self.process.make_afd(await self.process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        addr = await self.process.ram.ptr(await SockaddrUn.from_path(self.process, self.tmpdir/"sock"))
+        addr = await self.process.task.ptr(await SockaddrUn.from_path(self.process, self.tmpdir/"sock"))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
 
@@ -63,16 +63,16 @@ class TestSocket(TrioTestCase):
     async def test_pass_fd(self) -> None:
         fds = await (await self.process.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0,
-            await self.process.ram.malloc(Socketpair))).read()
+            await self.process.task.malloc(Socketpair))).read()
         in_data = b"hello"
 
-        iovec = await self.process.ram.ptr(IovecList([await self.process.ram.ptr(in_data)]))
-        cmsgs = await self.process.ram.ptr(CmsgList([CmsgSCMRights([fds.second])]))
+        iovec = await self.process.task.ptr(IovecList([await self.process.task.ptr(in_data)]))
+        cmsgs = await self.process.task.ptr(CmsgList([CmsgSCMRights([fds.second])]))
         [written], [] = await fds.second.sendmsg(
-            await self.process.ram.ptr(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
+            await self.process.task.ptr(SendMsghdr(None, iovec, cmsgs)), SendmsgFlags.NONE)
 
         [valid], [], hdr = await fds.first.recvmsg(
-            await self.process.ram.ptr(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
+            await self.process.task.ptr(RecvMsghdr(None, iovec, cmsgs)), RecvmsgFlags.NONE)
 
         self.assertEqual(in_data, await valid.read())
 
@@ -86,7 +86,7 @@ class TestSocket(TrioTestCase):
         "When we shutdown(SHUT.RD) a socket and read from it, we get pending data then EOF"
         fds = await (await self.process.task.socketpair(
             AF.UNIX, SOCK.STREAM, 0,
-            await self.process.ram.malloc(Socketpair))).read()
+            await self.process.task.malloc(Socketpair))).read()
 
         data = b'hello'
         await fds.second.write(await self.process.ptr(data))
@@ -96,9 +96,9 @@ class TestSocket(TrioTestCase):
 
     async def test_long_sockaddr(self) -> None:
         "SockaddrUn.from_path works correctly on long Unix socket paths"
-        longdir = await self.process.ram.ptr(self.tmpdir/("long"*50))
+        longdir = await self.process.task.ptr(self.tmpdir/("long"*50))
         await self.process.task.mkdir(longdir)
-        addr = await self.process.ram.ptr(await SockaddrUn.from_path(self.process, longdir.value/"sock"))
+        addr = await self.process.task.ptr(await SockaddrUn.from_path(self.process, longdir.value/"sock"))
 
         sockfd = await self.process.task.socket(AF.UNIX, SOCK.STREAM)
         await sockfd.bind(addr)
@@ -109,5 +109,5 @@ class TestSocket(TrioTestCase):
         connfd = await sockfd.accept()
 
         dirfd = await self.process.task.open(longdir, O.DIRECTORY)
-        valid, rest = await dirfd.getdents(await self.process.ram.malloc(DirentList, 4096))
+        valid, rest = await dirfd.getdents(await self.process.task.malloc(DirentList, 4096))
         self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..', 'sock'])

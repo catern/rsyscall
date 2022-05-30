@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from dneio import RequestQueue, reset, Continuation
 from rsyscall import Pointer
 from rsyscall.epoller import AsyncFileDescriptor, AsyncReadBuffer
-from rsyscall.memory.ram import RAM
 from rsyscall.near.types import WatchDescriptor
 from rsyscall.thread import Process
 import enum
@@ -93,12 +92,11 @@ assert _inotify_read_size > InotifyEvent.MINIMUM_SIZE_TO_READ_ONE_EVENT
 
 class Inotify:
     "An inotify file descriptor, which allows monitoring filesystem paths for events."
-    def __init__(self, asyncfd: AsyncFileDescriptor, ram: RAM,
+    def __init__(self, asyncfd: AsyncFileDescriptor,
                  buf: Pointer[InotifyEventList],
     ) -> None:
         "Private; use Inotify.make instead."
         self.asyncfd = asyncfd
-        self.ram = ram
         self.buf = buf
         self.wd_to_watch: t.Dict[WatchDescriptor, Watch] = {}
         self.queue = RequestQueue[WatchDescriptor, t.List[InotifyEvent]]()
@@ -108,9 +106,9 @@ class Inotify:
     async def make(process: Process) -> Inotify:
         "Create an Inotify file descriptor in `process`."
         asyncfd = await AsyncFileDescriptor.make(
-            process.epoller, process.ram, await process.task.inotify_init(InotifyFlag.NONBLOCK))
-        buf = await process.ram.malloc(InotifyEventList, _inotify_read_size)
-        return Inotify(asyncfd, process.ram, buf)
+            process.epoller, await process.task.inotify_init(InotifyFlag.NONBLOCK))
+        buf = await process.task.malloc(InotifyEventList, _inotify_read_size)
+        return Inotify(asyncfd, buf)
 
     async def add(self, path: handle.Path, mask: IN) -> Watch:
         """Start watching a given path for events in the passed mask
@@ -119,7 +117,7 @@ class Inotify:
         we'll return the same Watch object. Not sure how to make this usable.
 
         """
-        wd = await self.asyncfd.handle.inotify_add_watch(await self.ram.ptr(path), mask)
+        wd = await self.asyncfd.handle.inotify_add_watch(await self.asyncfd.handle.task.ptr(path), mask)
         # if watch descriptors wrap, we could get back a watch descriptor that has been
         # freed and reallocated but for which we haven't yet read the IN.IGNORED event, so
         # we'd return the wrong Watch. but as the manpage says, that bug is very unlikely,

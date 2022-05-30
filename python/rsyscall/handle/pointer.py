@@ -1,15 +1,19 @@
 from __future__ import annotations
 from dataclasses import dataclass
-import rsyscall.far
 import rsyscall.near
 import typing as t
 import logging
 import contextlib
 from rsyscall.struct import Serializer
 from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
-from rsyscall.sys.mman import MemoryMapping
+if t.TYPE_CHECKING:
+    import rsyscall.far
+    from rsyscall.sys.mman import MemoryMapping
 logger = logging.getLogger(__name__)
 
+
+class PointerTaskMismatchError(ValueError):
+    pass
 
 T = t.TypeVar('T')
 T_co = t.TypeVar('T_co', covariant=True)
@@ -174,11 +178,10 @@ class Pointer(t.Generic[T]):
 
     def check_address_space(self, task: rsyscall.far.Task) -> None:
         if self.shared:
-            if task.address_space != self.mapping.task.address_space:
-                raise rsyscall.far.AddressSpaceMismatchError(task.address_space, self.mapping.task.address_space)
+            task.address_space.assert_is(self.mapping.task.address_space)
         else:
             if task != self.mapping.task:
-                raise rsyscall.far.AddressSpaceMismatchError(task, self.mapping.task)
+                raise PointerTaskMismatchError(task, self.mapping.task)
 
     @contextlib.contextmanager
     def borrow(self, task: rsyscall.far.Task) -> t.Iterator[rsyscall.near.Address]:

@@ -17,7 +17,7 @@ from rsyscall.near.sysif import SyscallError
 import outcome
 import rsyscall.far as far
 import rsyscall.handle as handle
-from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError
+from rsyscall.memory.allocation_interface import AllocationInterface, UseAfterFreeError, OutOfSpaceError, AllocatorInterface
 from rsyscall.handle import Task
 import trio
 import abc
@@ -212,22 +212,6 @@ class Allocation(AllocationInterface):
 
     def __repr__(self) -> str:
         return str(self)
-
-class OutOfSpaceError(Exception):
-    "Raised by malloc if the allocation request couldn't be satisfied."
-    pass
-
-class AllocatorInterface:
-    "A memory allocator; raises OutOfSpaceError if there's no more space."
-    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]:
-        # A naive bulk allocator
-        return [await self.malloc(size, alignment) for size, alignment in sizes]
-
-    @abc.abstractmethod
-    async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]: ...
-
-    def inherit(self, task: Task) -> AllocatorInterface:
-        raise Exception("can't be inherited:", self)
 
 @dataclass(eq=False)
 class Arena(AllocatorInterface):

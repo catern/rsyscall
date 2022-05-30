@@ -13,9 +13,9 @@ import unittest
 async def do_async_things(self: unittest.TestCase, epoller: Epoller, thr: Process, i: int=0,
                           *, task_status=trio.TASK_STATUS_IGNORED) -> None:
     logger.debug("Setting up for do_async_things(%d)", i)
-    pipe = await (await thr.task.pipe(await thr.ram.malloc(Pipe), O.NONBLOCK)).read()
-    async_pipe_rfd = await AsyncFileDescriptor.make(epoller, thr.ram, pipe.read)
-    async_pipe_wfd = await AsyncFileDescriptor.make(epoller, thr.ram, pipe.write)
+    pipe = await (await thr.task.pipe(await thr.task.malloc(Pipe), O.NONBLOCK)).read()
+    async_pipe_rfd = await AsyncFileDescriptor.make(epoller, pipe.read)
+    async_pipe_wfd = await AsyncFileDescriptor.make(epoller, pipe.write)
     task_status.started(None)
     data = b"hello world"
     logger.debug("Starting do_async_things(%d)", i)

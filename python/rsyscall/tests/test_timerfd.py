@@ -10,5 +10,5 @@ class TestTimerfd(TrioTestCase):
 
     async def test(self) -> None:
         await self.fd.timerfd_settime(
-            TFD_TIMER.NONE, await self.process.ram.ptr(Itimerspec(Timespec(0, 0), Timespec(0, 1))))
-        await self.fd.timerfd_gettime(await self.process.ram.malloc(Itimerspec))
+            TFD_TIMER.NONE, await self.process.task.ptr(Itimerspec(Timespec(0, 0), Timespec(0, 1))))
+        await self.fd.timerfd_gettime(await self.process.task.malloc(Itimerspec))

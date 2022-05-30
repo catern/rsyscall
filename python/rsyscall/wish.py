@@ -66,8 +66,8 @@ class ConsoleGenie(WishGranter):
             message = "".join(traceback.format_exception(None, wish, wish.__traceback__))
             wisher_frame = [frame for (frame, lineno) in traceback.walk_tb(wish.__traceback__)][-1]
 
-            to_term_pipe = await (await self.process.task.pipe(await self.process.ram.malloc(Pipe))).read()
-            from_term_pipe = await (await self.process.task.pipe(await self.process.ram.malloc(Pipe))).read()
+            to_term_pipe = await (await self.process.task.pipe(await self.process.task.malloc(Pipe))).read()
+            from_term_pipe = await (await self.process.task.pipe(await self.process.task.malloc(Pipe))).read()
             async_from_term = await self.process.make_afd(from_term_pipe.read, set_nonblock=True)
             async_to_term = await self.process.make_afd(to_term_pipe.write, set_nonblock=True)
             try:
@@ -150,7 +150,7 @@ class ConsoleServerGenie(WishGranter):
                 'wisher_frame': wisher_frame,
             }, wish.return_type, message)
             nursery.cancel_scope.cancel()
-        await self.process.task.unlink(await self.process.ram.ptr(sock_path))
+        await self.process.task.unlink(await self.process.task.ptr(sock_path))
         return ret
 
 async def run_repl(infd: AsyncFileDescriptor,

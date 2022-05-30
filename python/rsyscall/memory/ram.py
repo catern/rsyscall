@@ -1,17 +1,16 @@
 "The high-level interfaces to memory"
 from __future__ import annotations
 from dneio import run_all
-from rsyscall.handle import Task, Pointer, WrittenPointer
-from rsyscall.memory.allocation_interface import AllocationInterface
-from rsyscall.memory.allocator import AllocatorInterface
+from rsyscall.handle.pointer import Pointer, WrittenPointer
+from rsyscall.memory.allocation_interface import AllocatorInterface
 from rsyscall.struct import FixedSize, T_fixed_size, HasSerializer, T_has_serializer, FixedSerializer, T_fixed_serializer, Serializer, PathLikeSerializer, T_pathlike, StrSerializer
-from rsyscall.sys.mman import MemoryMapping
 import functools
 import os
 import rsyscall.near.types as near
-import rsyscall.far as far
 
 import typing as t
+if t.TYPE_CHECKING:
+    from rsyscall.sys.mman import MemoryMapping
 
 __all__ = [
     "RAM",
@@ -25,7 +24,7 @@ class BytesSerializer(Serializer[bytes]):
         return data
 
 T = t.TypeVar('T')
-class RAM:
+class RAMTask:
     """Central user-friendly class for accessing memory.
 
     Future work: An option to allocate "const" pointers, which we
@@ -33,12 +32,7 @@ class RAM:
     useful for small pieces of memory which are very frequently used.
 
     """
-    def __init__(self, 
-                 task: Task,
-                 allocator: AllocatorInterface,
-    ) -> None:
-        self.task = task
-        self.allocator = allocator
+    allocator: AllocatorInterface
 
     @t.overload
     async def malloc(self, cls: t.Type[T_fixed_size]) -> Pointer[T_fixed_size]: ...
@@ -70,13 +64,13 @@ class RAM:
         if size is None:
             if not issubclass(cls, FixedSize):
                 raise Exception("non-FixedSize cls passed to malloc without specifying size to allocate", cls)
-            ptr: Pointer = await self.malloc_serializer(cls.get_serializer(self.task), cls.sizeof(), cls)
+            ptr: Pointer = await self.malloc_serializer(cls.get_serializer(self), cls.sizeof(), cls)
             return ptr
         else:
             if issubclass(cls, FixedSize):
                 raise Exception("Can't pass a FixedSize cls to malloc and also specify the size argument", cls, size)
             if issubclass(cls, FixedSerializer):
-                ptr = await self.malloc_serializer(cls.get_serializer(self.task), size, cls)
+                ptr = await self.malloc_serializer(cls.get_serializer(self), size, cls)
                 return ptr
             # special-case Path/str/bytes so that they don't have to get wrapped just for rsyscall
             elif issubclass(cls, os.PathLike):
@@ -106,7 +100,7 @@ class RAM:
     ]:
         "Take some serializable data and return a pointer in memory containing it."
         if isinstance(data, HasSerializer):
-            serializer = data.get_self_serializer(self.task)
+            serializer = data.get_self_serializer(self)
             data_bytes = serializer.to_bytes(data)
             ptr: Pointer = await self.malloc_serializer(
                 serializer, len(data_bytes), type(data))

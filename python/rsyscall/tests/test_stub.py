@@ -46,6 +46,6 @@ class TestStub(TrioTestCase):
         self.nursery.start_soon(child.check)
         argv, new_process = await self.server.accept()
         valid, _ = await new_process.stdin.read(
-            await new_process.ram.malloc(bytes, len(data_in)))
+            await new_process.task.malloc(bytes, len(data_in)))
         self.assertEqual(data_in, (await valid.read()).decode())
     

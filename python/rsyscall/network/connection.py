@@ -7,7 +7,6 @@ import typing as t
 import trio
 from rsyscall.epoller import AsyncFileDescriptor, Epoller
 from rsyscall.handle import FileDescriptor, WrittenPointer, Task
-from rsyscall.memory.ram import RAM
 
 from rsyscall.sys.socket import AF, SOCK, Sockaddr, SendmsgFlags, RecvmsgFlags, SendMsghdr, RecvMsghdr, CmsgList, CmsgSCMRights, Socketpair
 from rsyscall.sys.uio import IovecList
@@ -54,9 +53,10 @@ class Connection:
         """Like open_channel, but returns the left side as an AsyncFileDescriptor
 
         As discussed in open_channel's docstring, the left side is the "local" side, and
-        is more efficient to access. Here we take that further: Since an AFD comes with a
-        RAM, we can immediately read and write Python bytes to the left side of this
-        channel. This provides an efficient way to transfer data between Python and things
+        is more efficient to access. Here we take that further:
+        Since an AFD is already registered with an Epoller,
+        we can immediately read and write Python bytes to the left side of this channel.
+        This provides an efficient way to transfer data between Python and things
         which operate on file descriptors, such as subprocesses.
 
         This is how we establish all our syscall or data connections for new processes;
@@ -70,7 +70,7 @@ class Connection:
 
 
     @abc.abstractmethod
-    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], Connection]]:
+    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, FileDescriptor], Connection]]:
         """Prepare to transfer this Connection to another task; call the callable to execute
 
         The user should use whatever means to transport the returned file descriptor to
@@ -87,7 +87,7 @@ class Connection:
         pass
 
     @abc.abstractmethod
-    def inherit(self, task: Task, ram: RAM) -> Connection:
+    def inherit(self, task: Task) -> Connection:
         """Transfer this Connection to a new task by using "inherit" to move the fds"""
         pass
 
@@ -101,30 +101,28 @@ class FDPassConnection(Connection):
 
     """
     @staticmethod
-    async def make(task: Task, ram: RAM, epoller: Epoller) -> FDPassConnection:
-        pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await ram.malloc(Socketpair))).read()
-        return FDPassConnection(task, ram, epoller, pair.first, task, ram, pair.second)
+    async def make(task: Task, epoller: Epoller) -> FDPassConnection:
+        pair = await (await task.socketpair(AF.UNIX, SOCK.STREAM, 0, await task.malloc(Socketpair))).read()
+        return FDPassConnection(task, epoller, pair.first, task, pair.second)
 
-    def __init__(self, access_task: Task, access_ram: RAM, access_epoller: Epoller, access_fd: FileDescriptor,
-                 task: Task, ram: RAM, fd: FileDescriptor) -> None:
+    def __init__(self, access_task: Task, access_epoller: Epoller, access_fd: FileDescriptor,
+                 task: Task, fd: FileDescriptor) -> None:
         self.access_task = access_task
-        self.access_ram = access_ram
         self.access_epoller = access_epoller
         self.access_fd = access_fd
         self.task = task
-        self.ram = ram
         self.fd = fd
 
     async def move_fds(self, fds: t.List[FileDescriptor]) -> t.List[FileDescriptor]:
         "Move the passed-in file descriptors from self.access_task to self.task"
         if self.access_task.fd_table == self.task.fd_table:
             return [fd.move(self.task) for fd in fds]
-        iovec = await self.access_ram.ptr(IovecList([await self.access_ram.malloc(bytes, 1)]))
-        cmsgs = await self.access_ram.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-        _, [] = await self.access_fd.sendmsg(await self.access_ram.ptr(SendMsghdr(None, iovec, cmsgs)))
-        iovec = await self.ram.ptr(IovecList([await self.ram.malloc(bytes, 1)]))
-        cmsgs = await self.ram.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
-        _, [], hdr = await self.fd.recvmsg(await self.ram.ptr(RecvMsghdr(None, iovec, cmsgs)))
+        iovec = await self.access_task.ptr(IovecList([await self.access_task.malloc(bytes, 1)]))
+        cmsgs = await self.access_task.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+        _, [] = await self.access_fd.sendmsg(await self.access_task.ptr(SendMsghdr(None, iovec, cmsgs)))
+        iovec = await self.task.ptr(IovecList([await self.task.malloc(bytes, 1)]))
+        cmsgs = await self.task.ptr(CmsgList([CmsgSCMRights([fd for fd in fds])]))
+        _, [], hdr = await self.fd.recvmsg(await self.task.ptr(RecvMsghdr(None, iovec, cmsgs)))
         cmsgs_ptr = (await hdr.read()).control
         if cmsgs_ptr is None:
             raise Exception("cmsgs field of header is, impossibly, None")
@@ -139,7 +137,7 @@ class FDPassConnection(Connection):
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
         async def make() -> Socketpair:
             return await (await self.access_task.socketpair(
-                AF.UNIX, SOCK.STREAM, 0, await self.access_ram.malloc(Socketpair))).read()
+                AF.UNIX, SOCK.STREAM, 0, await self.access_task.malloc(Socketpair))).read()
         pairs = await make_n_in_parallel(make, count)
         fds = await self.move_fds([pair.second for pair in pairs])
         return [(pair.first, fd) for pair, fd in zip(pairs, fds)]
@@ -150,23 +148,22 @@ class FDPassConnection(Connection):
         async def make_afd(sock: FileDescriptor) -> AsyncFileDescriptor:
             # have to set NONBLOCK after creation because we want the other end to be blocking
             await sock.fcntl(F.SETFL, O.NONBLOCK)
-            return await AsyncFileDescriptor.make(self.access_epoller, self.access_ram, sock)
+            return await AsyncFileDescriptor.make(self.access_epoller, sock)
         async_access_socks = [await make_afd(sock) for sock in access_socks]
         return list(zip(async_access_socks, local_socks))
 
-    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], FDPassConnection]]:
+    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, FileDescriptor], FDPassConnection]]:
         return self.fd, self.for_task_with_fd
 
-    def for_task_with_fd(self, task: Task, ram: RAM, fd: FileDescriptor) -> FDPassConnection:
+    def for_task_with_fd(self, task: Task, fd: FileDescriptor) -> FDPassConnection:
         return FDPassConnection(
             self.access_task,
-            self.access_ram,
             self.access_epoller,
             self.access_fd,
-            task, ram, fd)
+            task, fd)
 
-    def inherit(self, task: Task, ram: RAM) -> FDPassConnection:
-        return self.for_task_with_fd(task, ram, self.fd.inherit(task))
+    def inherit(self, task: Task) -> FDPassConnection:
+        return self.for_task_with_fd(task, self.fd.inherit(task))
 
 class ListeningConnection(Connection):
     """An (address, listening socket) pair with which we can do connect(); accept(); to establish a new channel.
@@ -176,24 +173,20 @@ class ListeningConnection(Connection):
     """
     def __init__(self,
                  access_task: Task,
-                 access_ram: RAM,
                  access_epoller: Epoller,
                  access_address: WrittenPointer[Sockaddr],
                  task: Task,
-                 ram: RAM,
                  listening_fd: AsyncFileDescriptor,
     ) -> None:
         self.access_task = access_task
-        self.access_ram = access_ram
         self.access_epoller = access_epoller
         self.access_address = access_address
         self.task = task
-        self.ram = ram
         self.listening_fd = listening_fd
 
     async def open_async_channel(self) -> t.Tuple[AsyncFileDescriptor, FileDescriptor]:
         access_sock = await AsyncFileDescriptor.make(
-            self.access_epoller, self.access_ram,
+            self.access_epoller,
             await self.access_task.socket(self.access_address.value.family, SOCK.STREAM|SOCK.NONBLOCK))
         await access_sock.connect(self.access_address)
         sock = await self.listening_fd.accept()
@@ -213,17 +206,16 @@ class ListeningConnection(Connection):
     async def open_channels(self, count: int) -> t.List[t.Tuple[FileDescriptor, FileDescriptor]]:
         return [await self.open_channel() for _ in range(count)]
 
-    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, RAM, FileDescriptor], Connection]]:
+    async def prep_fd_transfer(self) -> t.Tuple[FileDescriptor, t.Callable[[Task, FileDescriptor], Connection]]:
         return self.listening_fd.handle, self.for_task_with_fd
 
-    def for_task_with_fd(self, task: Task, ram: RAM, fd: FileDescriptor) -> ListeningConnection:
+    def for_task_with_fd(self, task: Task, fd: FileDescriptor) -> ListeningConnection:
         return ListeningConnection(
             self.access_task,
-            self.access_ram,
             self.access_epoller,
             self.access_address,
-            task, ram, self.listening_fd.with_handle(fd),
+            task, self.listening_fd.with_handle(fd),
         )
 
-    def inherit(self, task: Task, ram: RAM) -> ListeningConnection:
-        return self.for_task_with_fd(task, ram, self.listening_fd.handle.inherit(task))
+    def inherit(self, task: Task) -> ListeningConnection:
+        return self.for_task_with_fd(task, self.listening_fd.handle.inherit(task))

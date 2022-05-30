@@ -16,7 +16,6 @@ from rsyscall.epoller import Epoller, AsyncReadBuffer
 from rsyscall.handle import WrittenPointer, Task
 from rsyscall.thread import Process
 from rsyscall.loader import NativeLoader
-from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.tasks.connection import SyscallConnection
 import logging
@@ -71,7 +70,7 @@ async def stdin_bootstrap(
     #### clone and exec into the bootstrap command
     # create the socketpair that will be used as stdin
     stdin_pair = await (await parent.task.socketpair(
-        AF.UNIX, SOCK.STREAM, 0, await parent.ram.malloc(Socketpair))).read()
+        AF.UNIX, SOCK.STREAM, 0, await parent.task.malloc(Socketpair))).read()
     parent_sock = stdin_pair.first
     child = await parent.fork()
     # set up stdin with socketpair
@@ -117,23 +116,20 @@ async def stdin_bootstrap(
         access_syscall_sock,
         remote_syscall_fd,
     )
-    allocator = await memory.AllocatorClient.make_allocator(base_task)
+    base_task.allocator = await memory.AllocatorClient.make_allocator(base_task)
     # we assume our SignalMask is zero'd before being started, so we don't inherit it
-    ram = RAM(base_task,
-               allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
-    epoller = await Epoller.make_root(ram, base_task)
-    child_monitor = await ChildPidMonitor.make(ram, base_task, epoller)
-    connection = make_connection(base_task, ram,
+    epoller = await Epoller.make_root(base_task)
+    child_monitor = await ChildPidMonitor.make(base_task, epoller)
+    connection = make_connection(base_task,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_parent = Process(
         task=base_task,
-        ram=ram,
         connection=connection,
         loader=NativeLoader.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environ=Environment.make_from_environ(base_task, ram, environ),
+        environ=Environment.make_from_environ(base_task, environ),
         stdin=base_task.make_fd_handle(near.FileDescriptor(0)),
         stdout=base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=base_task.make_fd_handle(near.FileDescriptor(2)),

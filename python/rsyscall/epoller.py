@@ -87,7 +87,6 @@ import os
 import math
 import typing as t
 from rsyscall.near.sysif import SyscallHangup
-from rsyscall.memory.ram import RAM
 from rsyscall.handle import FileDescriptor, Pointer, WrittenPointer, Task
 from dataclasses import dataclass
 from rsyscall.struct import Int32, T_fixed_size, HasSerializer
@@ -119,12 +118,11 @@ class EpollWaiter:
     efficient.
 
     """
-    def __init__(self, ram: RAM, epfd: FileDescriptor,
+    def __init__(self, epfd: FileDescriptor,
                  wait_readable: t.Optional[t.Callable[[], t.Awaitable[None]]],
                  timeout: int,
     ) -> None:
         "To make this, use one of the constructor methods of Epoller: make_subsidiary or make_root"
-        self.ram = ram
         self.epfd = epfd
         self.wait_readable = wait_readable
         self.timeout = timeout
@@ -161,7 +159,7 @@ class EpollWaiter:
         self.pending_remove.add(number)
 
     async def _run(self) -> None:
-        input_buf: Pointer = await self.ram.malloc(EpollEventList, 32 * EpollEvent.sizeof())
+        input_buf: Pointer = await self.epfd.task.malloc(EpollEventList, 32 * EpollEvent.sizeof())
         number_to_cb: t.Dict[int, Continuation[EPOLL]] = {}
         registered_activity_fd: t.Optional[FileDescriptor] = None
         while True:
@@ -179,7 +177,7 @@ class EpollWaiter:
                     while True:
                         await self.queue.request(activity_fd_number)
                 reset(devnull())
-                await self.epfd.epoll_ctl(EPOLL_CTL.ADD, activity_fd, await self.ram.ptr(
+                await self.epfd.epoll_ctl(EPOLL_CTL.ADD, activity_fd, await self.epfd.task.ptr(
                     EpollEvent(activity_fd_number,
                                # not edge triggered; we don't want to block if there's
                                # anything that can be read.
@@ -212,18 +210,18 @@ class EpollWaiter:
 class Epoller:
     "Terribly named class that allows registering fds on epoll, and waiting on them."
     @staticmethod
-    def make_subsidiary(ram: RAM, epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> Epoller:
+    def make_subsidiary(epfd: FileDescriptor, wait_readable: t.Callable[[], t.Awaitable[None]]) -> Epoller:
         """Make a subsidiary epoller, as described in the module docstring.
 
         We delegate responsibility for blocking to wait for new events to some other
         component. We call the passed-in wait_readable function to block for new events.
 
         """
-        center = Epoller(EpollWaiter(ram, epfd, wait_readable, 0), ram, epfd)
+        center = Epoller(EpollWaiter(epfd, wait_readable, 0), epfd)
         return center
 
     @staticmethod
-    async def make_root(ram: RAM, task: Task) -> Epoller:
+    async def make_root(task: Task) -> Epoller:
         """Make a root epoller, as described in the module docstring.
 
         We take responsibility for blocking to wait for new events for every other
@@ -233,23 +231,22 @@ class Epoller:
 
         """
         epfd = await task.epoll_create()
-        center = Epoller(EpollWaiter(ram, epfd, None, -1), ram, epfd)
+        center = Epoller(EpollWaiter(epfd, None, -1), epfd)
         return center
 
-    def __init__(self, epoll_waiter: EpollWaiter, ram: RAM, epfd: FileDescriptor) -> None:
+    def __init__(self, epoll_waiter: EpollWaiter, epfd: FileDescriptor) -> None:
         "Don't construct directly; use one of the constructor methods, make_subsidiary or make_root."
         self.epoll_waiter = epoll_waiter
-        self.ram = ram
         self.epfd = epfd
 
-    def inherit(self, ram: RAM) -> Epoller:
+    def inherit(self, task: Task) -> Epoller:
         """Make a new Epoller which shares the same EpollWaiter class.
 
         We inherit the epollfd to a new task for the purpose of registering new fds on it;
         but we share the class and task which actually calls epoll_wait.
 
         """
-        return Epoller(self.epoll_waiter, ram, self.epfd.inherit(ram.task))
+        return Epoller(self.epoll_waiter, self.epfd.inherit(task))
 
     async def register(self, fd: FileDescriptor, events: EPOLL) -> EpolledFileDescriptor:
         """Register a file descriptor on this epollfd, for the given events, calling the passed callback.
@@ -261,7 +258,7 @@ class Epoller:
         """
         number = self.epoll_waiter.allocate_number(int(fd.near))
         efd = EpolledFileDescriptor(self, fd, number)
-        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.ram.ptr(EpollEvent(number, events)))
+        await self.epfd.epoll_ctl(EPOLL_CTL.ADD, fd, await self.epfd.task.ptr(EpollEvent(number, events)))
         return efd
 
 class EpolledFileDescriptor:
@@ -301,7 +298,7 @@ class EpolledFileDescriptor:
     async def modify(self, events: EPOLL) -> None:
         "Change the EPOLL flags that this fd is registered with."
         await self.epoller.epfd.epoll_ctl(
-            EPOLL_CTL.MOD, self.fd, await self.epoller.ram.ptr(EpollEvent(self.number, events)))
+            EPOLL_CTL.MOD, self.fd, await self.epoller.epfd.task.ptr(EpollEvent(self.number, events)))
 
     async def delete(self) -> None:
         "Delete this fd from the epollfd."
@@ -465,7 +462,7 @@ class AsyncFileDescriptor:
 
     """
     @staticmethod
-    async def make(epoller: Epoller, ram: RAM, fd: FileDescriptor) -> AsyncFileDescriptor:
+    async def make(epoller: Epoller, fd: FileDescriptor) -> AsyncFileDescriptor:
         """Make an AsyncFileDescriptor; make sure to call this with only O.NONBLOCK file descriptors.
 
         It won't actually break anything if this is called with file descriptors not in
@@ -476,13 +473,12 @@ class AsyncFileDescriptor:
         epolled = await epoller.register(
             fd, EPOLL.IN|EPOLL.OUT|EPOLL.RDHUP|EPOLL.PRI|EPOLL.ERR|EPOLL.HUP|EPOLL.ET,
         )
-        return AsyncFileDescriptor(ram, fd, epolled)
+        return AsyncFileDescriptor(fd, epolled)
 
-    def __init__(self, ram: RAM, handle: FileDescriptor,
+    def __init__(self, handle: FileDescriptor,
                  epolled: EpolledFileDescriptor,
     ) -> None:
         "Don't construct directly; use the AsyncFileDescriptor.make constructor instead."
-        self.ram = ram
         self.handle = handle
         "The underlying FileDescriptor for this AFD, used for all system calls"
         self.epolled = epolled
@@ -494,7 +490,7 @@ class AsyncFileDescriptor:
         return str(self)
 
     async def make_new_afd(self, fd: FileDescriptor) -> AsyncFileDescriptor:
-        """Use the Epoller and RAM in this AsyncFD to make a new `AsyncFileDescriptor` for `fd`
+        """Use the Epoller in this AsyncFD to make a new `AsyncFileDescriptor` for `fd`
 
         Make sure that `fd` is already in non-blocking mode;
         such as by accepting it with the `SOCK.NONBLOCK` flag.
@@ -503,7 +499,7 @@ class AsyncFileDescriptor:
         most useful when calling accept() and wanting to create new AFDs out of the resulting FDs.
 
         """
-        return await AsyncFileDescriptor.make(self.epolled.epoller, self.ram, fd)
+        return await AsyncFileDescriptor.make(self.epolled.epoller, fd)
 
     async def wait_for_rdhup(self) -> None:
         "Call epoll_wait until this file descriptor has a hangup."
@@ -532,7 +528,7 @@ class AsyncFileDescriptor:
         across multiple calls to `AsyncFileDescriptor.read`.
 
         """
-        ptr = await self.ram.malloc(bytes, count)
+        ptr = await self.handle.task.malloc(bytes, count)
         valid, _ = await self.read(ptr)
         return await valid.read()
 
@@ -574,7 +570,7 @@ class AsyncFileDescriptor:
         In those cases, you might want to use `AsyncFileDescriptor.write_all`.
 
         """
-        ptr = await self.ram.ptr(buf)
+        ptr = await self.handle.task.ptr(buf)
         await self.write_all(ptr)
 
     async def send(self, buf: Pointer, flags: MSG) -> t.Tuple[Pointer, Pointer]:
@@ -611,7 +607,7 @@ class AsyncFileDescriptor:
         See `AsyncFileDescriptor.write_all_bytes` and `AsyncFileDescriptor.send`.
 
         """
-        ptr = await self.ram.ptr(buf)
+        ptr = await self.handle.task.ptr(buf)
         await self.send_all(ptr, flags)
 
     @t.overload
@@ -641,7 +637,7 @@ class AsyncFileDescriptor:
 
     async def accept_addr(self, flags: SOCK=SOCK.NONE) -> t.Tuple[FileDescriptor, Sockaddr]:
         "Call accept with a buffer for the address, and return the resulting fd and address."
-        written_sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(SockaddrStorage)))
+        written_sockbuf = await self.handle.task.ptr(Sockbuf(await self.handle.task.malloc(SockaddrStorage)))
         fd, sockbuf = await self.accept(flags, written_sockbuf)
         addr = (await (await sockbuf.read()).buf.read()).parse()
         return fd, addr
@@ -661,7 +657,7 @@ class AsyncFileDescriptor:
         except OSError as e:
             self.epolled.status.negedge(EPOLL.OUT)
             if e.errno == errno.EINPROGRESS:
-                sockbuf = await self.ram.ptr(Sockbuf(await self.ram.malloc(Int32)))
+                sockbuf = await self.handle.task.ptr(Sockbuf(await self.handle.task.malloc(Int32)))
                 async with self.epolled.wait_for_and_discard_after(EPOLL.OUT):
                     retbuf = await self.handle.getsockopt(SOL.SOCKET, SO.ERROR, sockbuf)
                 err = await (await retbuf.read()).buf.read()
@@ -688,7 +684,7 @@ class AsyncFileDescriptor:
         using this AFD.
 
         """
-        return AsyncFileDescriptor(self.ram, fd, self.epolled)
+        return AsyncFileDescriptor(fd, self.epolled)
 
     async def close(self) -> None:
         "Remove this FD from Epoll and invalidate the FD handle."
@@ -723,7 +719,7 @@ class AsyncReadBuffer:
     async def _read(self) -> bytes:
         "Read some bytes; raises on EOF."
         if self.unread_ptr is None:
-            ptr = await self.fd.ram.malloc(bytes, 4096)
+            ptr = await self.fd.handle.task.malloc(bytes, 4096)
             self.unread_ptr, _ = await self.fd.read(ptr)
         if self.unread_ptr.size():
             data = await self.unread_ptr.read()

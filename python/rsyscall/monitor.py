@@ -53,7 +53,6 @@ from dataclasses import dataclass
 from dneio import RequestQueue, reset, Event
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import WrittenPointer, Pointer, Stack, FutexNode, Task, Pointer, ChildPid
-from rsyscall.memory.ram import RAM
 from rsyscall.near.sysif import SyscallError
 from rsyscall.sched import CLONE
 from rsyscall.signal import SIG, Sigset, Siginfo
@@ -86,7 +85,7 @@ class AsyncSignalfd:
 
     """
     @classmethod
-    async def make(cls, ram: RAM, task: Task, epoller: Epoller, mask: Sigset,
+    async def make(cls, task: Task, epoller: Epoller, mask: Sigset,
                    *, signal_block: SignalBlock=None,
     ) -> AsyncSignalfd:
         """Make a signalfd and register it on the epoller, possibly blocking signals
@@ -98,13 +97,13 @@ class AsyncSignalfd:
         if task is not epoller.epoll_waiter.epfd.task:
             raise Exception("signalfd task and epoll_waiter task must be the same")
         if signal_block is None:
-            sigset_ptr, oldset_ptr = await ram.ptr(mask), await ram.malloc(Sigset)
+            sigset_ptr, oldset_ptr = await task.ptr(mask), await task.malloc(Sigset)
             signal_block = await task.sigmask_block(sigset_ptr, oldset_ptr)
             await task.read_oldset_and_check()
         else:
             sigset_ptr = signal_block.newset
-        afd = await AsyncFileDescriptor.make(epoller, ram, await task.signalfd(sigset_ptr, SFD.NONBLOCK))
-        return cls(afd, signal_block, await ram.malloc(SignalfdSiginfo))
+        afd = await AsyncFileDescriptor.make(epoller, await task.signalfd(sigset_ptr, SFD.NONBLOCK))
+        return cls(afd, signal_block, await task.malloc(SignalfdSiginfo))
 
     def __init__(self,
                  afd: AsyncFileDescriptor,
@@ -133,9 +132,8 @@ class AsyncSignalfd:
 
 class AsyncChildPid:
     "A child process which can be monitored without blocking the process"
-    def __init__(self, pid: ChildPid, ram: RAM, sigchld_sigfd: AsyncSignalfd) -> None:
+    def __init__(self, pid: ChildPid, sigchld_sigfd: AsyncSignalfd) -> None:
         self.pid = pid
-        self.ram = ram
         self.sigchld_sigfd = sigchld_sigfd
         self.next_sigchld: t.Optional[Event] = None
 
@@ -153,7 +151,7 @@ class AsyncChildPid:
             # between the previous waitid and now, and was consumed at that time.
             if result:
                 return result
-        siginfo_buf = await self.ram.malloc(Siginfo)
+        siginfo_buf = await self.pid.task.malloc(Siginfo)
         await self.pid.waitid(W.EXITED|W.STOPPED|W.CONTINUED|W.NOHANG, siginfo_buf)
         return await self.pid.read_siginfo()
 
@@ -240,12 +238,11 @@ class ChildPidMonitor:
 
     """
     sigfd: AsyncSignalfd
-    ram: RAM
     cloning_task: Task
     use_clone_parent: bool
 
     @staticmethod
-    async def make(ram: RAM, task: Task, epoller: Epoller,
+    async def make(task: Task, epoller: Epoller,
                    *, signal_block: SignalBlock=None,
     ) -> ChildPidMonitor:
         """Make a ChildPidMonitor, possibly blocking signals
@@ -254,8 +251,8 @@ class ChildPidMonitor:
         represent that, and save the need to make the SignalBlock.
 
         """
-        sigfd = await AsyncSignalfd.make(ram, task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
-        return ChildPidMonitor(sigfd, ram, task, use_clone_parent=False)
+        sigfd = await AsyncSignalfd.make(task, epoller, Sigset({SIG.CHLD}), signal_block=signal_block)
+        return ChildPidMonitor(sigfd, task, use_clone_parent=False)
 
     def inherit_to_child(self, child_task: Task) -> ChildPidMonitor:
         """Create a new instance that will clone children from the passed-in task
@@ -274,7 +271,7 @@ class ChildPidMonitor:
         # child processes of self.sigfd.afd.handle.task.
         # 3. Therefore self.sigfd will be notified if and when those future child processes have some state change.
         # 4. Therefore we can use self.sigfd to create AsyncChildPides for those future child processes.
-        return ChildPidMonitor(self.sigfd, self.ram, child_task, use_clone_parent=True)
+        return ChildPidMonitor(self.sigfd, child_task, use_clone_parent=True)
 
     def add_child_pid(self, pid: ChildPid) -> AsyncChildPid:
         """Create an AsyncChildPid which monitors the passed-in ChildPid.
@@ -288,7 +285,7 @@ class ChildPidMonitor:
         if pid.task is not self.sigfd.afd.handle.task:
             raise Exception("pid", pid, "with parent task", pid.task,
                             "is not our child; we're", self.sigfd.afd.handle.task)
-        proc = AsyncChildPid(pid, self.ram, self.sigfd)
+        proc = AsyncChildPid(pid, self.sigfd)
         return proc
 
     async def clone(self, flags: CLONE,

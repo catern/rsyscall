@@ -49,7 +49,7 @@ class TestEpoller(TrioTestCase):
 
     async def test_process_root_epoller(self) -> None:
         process = await self.process.fork()
-        epoller = await Epoller.make_root(process.ram, process.task)
+        epoller = await Epoller.make_root(process.task)
         await do_async_things(self, epoller, process)
 
     async def test_afd_with_handle(self):

@@ -24,7 +24,6 @@ from rsyscall.linux.dirent import DirentList, DT
 from rsyscall.time import Timespec
 from rsyscall.sys.stat import TypeMode, S_IF, Mode
 from rsyscall import Command, WrittenPointer, FileDescriptor, Process
-from rsyscall.memory.ram import RAM
 from rsyscall.unistd import AT, ArgList
 from rsyscall.tasks.stub import StubServer
 import errno

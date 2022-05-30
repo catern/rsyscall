@@ -15,7 +15,7 @@ class TestBenchmark(TrioTestCase):
     async def test_bench(self):
         "Run a simple clone and exec case inside cProfile (without asserting the results)"
 
-        await self.process.environ.as_arglist(self.process.ram)
+        await self.process.environ.as_arglist(self.process.task)
         cmd = (await self.process.environ.which("echo")).args("-n")
         pr = cProfile.Profile()
         warm_up_runs = 1

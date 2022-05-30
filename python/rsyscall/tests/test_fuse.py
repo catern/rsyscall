@@ -19,7 +19,6 @@ from rsyscall.linux.dirent import DirentList, DT
 from rsyscall.time import Timespec
 from rsyscall.sys.stat import TypeMode, S_IF, Mode
 from rsyscall import Command, WrittenPointer, FileDescriptor
-from rsyscall.memory.ram import RAM
 from rsyscall.unistd import AT, ArgList
 from rsyscall.tasks.stub import StubServer
 from rsyscall.scripts.symsh import FuseFS
@@ -63,7 +62,7 @@ class TestFUSE(TrioTestCase):
             await foo.close()
 
             root = await self.child.task.open(await self.child.ptr(self.path), O.RDONLY)
-            valid, rest = await root.getdents(await self.child.ram.malloc(DirentList, 4096))
+            valid, rest = await root.getdents(await self.child.task.malloc(DirentList, 4096))
             await root.close()
         root_getattr = await self.assertRead(FuseGetattrOp)
         if root_getattr.hdr.nodeid != 1:

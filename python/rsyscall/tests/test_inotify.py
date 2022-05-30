@@ -16,7 +16,7 @@ class TestInotify(TrioTestCase):
     async def test_create(self) -> None:
         watch = await self.ify.add(self.tmpdir, IN.CREATE)
         name = "foo"
-        fd = await self.process.task.open(await self.process.ram.ptr(self.tmpdir/name), O.CREAT|O.EXCL)
+        fd = await self.process.task.open(await self.process.task.ptr(self.tmpdir/name), O.CREAT|O.EXCL)
         event = await watch.wait_until_event(IN.CREATE, name)
         self.assertEqual(event.name, name)
         self.assertEqual(event.mask, IN.CREATE)

@@ -15,8 +15,8 @@ async def update_symlink(process: Process, path: WrittenPointer[Path],
                          target: t.Union[str, os.PathLike]) -> WrittenPointer[Path]:
     "Atomically update this path to contain a symlink pointing at this target."
     tmpname = path.value.name + ".updating." + random_string(k=8)
-    tmppath = await process.ram.ptr(path.value.parent/tmpname)
-    await process.task.symlink(await process.ram.ptr(target), tmppath)
+    tmppath = await process.task.ptr(path.value.parent/tmpname)
+    await process.task.symlink(await process.task.ptr(target), tmppath)
     await process.task.rename(tmppath, path)
     return path
 
@@ -24,7 +24,7 @@ async def mkdtemp(process: Process, prefix: str="mkdtemp") -> 'TemporaryDirector
     "Make a temporary directory in process.environ.tmpdir."
     parent = process.environ.tmpdir
     name = prefix+"."+random_string(k=8)
-    await process.task.mkdir(await process.ram.ptr(parent/name), 0o700)
+    await process.task.mkdir(await process.task.ptr(parent/name), 0o700)
     return TemporaryDirectory(process, parent, name)
 
 class TemporaryDirectory(Path):
@@ -44,7 +44,7 @@ class TemporaryDirectory(Path):
         """
         # TODO would be nice if not sharing the fs information gave us a cap to chdir
         cleanup = await self.process.fork()
-        await cleanup.task.chdir(await cleanup.ram.ptr(self.parent))
+        await cleanup.task.chdir(await cleanup.task.ptr(self.parent))
         child = await cleanup.exec(self.process.environ.sh.args(
             '-c', f"chmod -R +w -- {self.name} && rm -rf -- {self.name}"))
         await child.check()

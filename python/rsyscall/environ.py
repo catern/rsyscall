@@ -13,7 +13,6 @@ from dneio import run_all
 from rsyscall.command import Command
 from rsyscall.handle import Task, FileDescriptor, WrittenPointer
 from rsyscall.handle.pointer import share_pointers
-from rsyscall.memory.ram import RAM
 from rsyscall.path import Path
 from rsyscall.unistd import ArgList
 import os
@@ -45,9 +44,8 @@ class ExecutableNotFound(Exception):
 
 class ExecutablePathCache:
     "A cache of executables looked up on PATH."
-    def __init__(self, task: Task, ram: RAM, paths: t.List[str]) -> None:
+    def __init__(self, task: Task, paths: t.List[str]) -> None:
         self.task = task
-        self.ram = ram
         self.paths = [Path(path) for path in paths]
         self.fds: t.Dict[Path, t.Optional[FileDescriptor]] = {}
         self.path_cache: t.Dict[str, Path] = {}
@@ -56,7 +54,7 @@ class ExecutablePathCache:
         "Return a cached file descriptor for this path."
         if path not in self.fds:
             try:
-                fd = await self.task.open(await self.ram.ptr(path), O.PATH|O.DIRECTORY)
+                fd = await self.task.open(await self.task.ptr(path), O.PATH|O.DIRECTORY)
             except OSError:
                 self.fds[path] = None
             else:
@@ -83,7 +81,7 @@ class ExecutablePathCache:
         try:
             path = self.path_cache[name]
         except KeyError:
-            nameptr = await self.ram.ptr(name)
+            nameptr = await self.task.ptr(name)
             # do the lookup for 64 paths at a time, that seems like a good batching number
             for paths in chunks(self.paths, 64):
                 results = await run_all(*[self._check(path, nameptr) for path in paths])
@@ -109,8 +107,8 @@ __pdoc__ = {
 class Environment:
     "A representation of Unix environment variables."
     @staticmethod
-    def make_from_environ(task: Task, ram: RAM, environment: t.Dict[str, str]) -> Environment:
-        return Environment(environment, ExecutablePathCache(task, ram, environment.get("PATH", "").split(":")))
+    def make_from_environ(task: Task, environment: t.Dict[str, str]) -> Environment:
+        return Environment(environment, ExecutablePathCache(task, environment.get("PATH", "").split(":")))
 
     def __init__(self, environment: t.Dict[str, str], path: ExecutablePathCache,
                  arglist_ptr: t.Optional[WrittenPointer[ArgList]]=None,
@@ -150,8 +148,8 @@ class Environment:
         "Locate an executable with this name on `PATH`; throw `ExecutableNotFound` on failure."
         return await self.path.which(name)
 
-    def inherit(self, task: Task, ram: RAM) -> Environment:
-        """Return a new Environment instance for this Task and RAM.
+    def inherit(self, task: Task) -> Environment:
+        """Return a new Environment instance for this Task
 
         We share the existing ExecutablePathCache. This centralizes path lookups so that
         they're shared between all `rsyscall.thread`es.
@@ -159,13 +157,13 @@ class Environment:
         """
         return Environment(dict(self.data), self.path, self.arglist_ptr)
 
-    async def as_arglist(self, ram: RAM) -> WrittenPointer[ArgList]:
+    async def as_arglist(self, task: Task) -> WrittenPointer[ArgList]:
         if self.arglist_ptr is None:
             envp = ['='.join([key, value]) for key, value in self.data.items()]
-            envp_ptrs = [await ram.ptr(arg) for arg in envp]
-            ptr = await ram.ptr(ArgList(envp_ptrs))
+            envp_ptrs = [await task.ptr(arg) for arg in envp]
+            ptr = await task.ptr(ArgList(envp_ptrs))
             ptr, *envp_ptrs = await share_pointers([ptr, *envp_ptrs])
-            # we could just do two calls to share_pointers (one before ram.ptr), but that adds a little latency,
+            # we could just do two calls to share_pointers (one before task.ptr), but that adds a little latency,
             # so instead we do this horrible abstraction-break
             # TODO think about how to do this safely and abstractly
             ptr.value = ArgList(envp_ptrs)

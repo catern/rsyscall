@@ -74,6 +74,10 @@ class AddressSpace:
     def __str__(self) -> str:
         return f"AddressSpace({self.creator_pid})"
 
+    def assert_is(self, other: AddressSpace) -> None:
+        if self is not other:
+            raise AddressSpaceMismatchError(self, other)
+
 @dataclass(eq=False)
 class PidNamespace:
     """An opaque representation of an existing pid namespace, compared with "is"
@@ -106,8 +110,11 @@ class AddressSpaceMismatchError(NamespaceMismatchError):
     pass
 
 #### Segment register
+from rsyscall.memory.allocation_interface import AllocatorInterface
+from rsyscall.memory.ram import RAMTask
+
 @dataclass(eq=False)
-class Task:
+class Task(RAMTask):
     """A wrapper around `SyscallInterface` which tracks the namespaces of the underlying process
 
     Note that this is a base class for the more fully featured `rsyscall.Task`.
@@ -143,6 +150,7 @@ class Task:
     near_pid: rsyscall.near.Pid
     fd_table: FDTable
     address_space: AddressSpace
+    allocator: AllocatorInterface
     pidns: PidNamespace
 
     def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]

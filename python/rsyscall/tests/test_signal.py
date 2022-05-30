@@ -4,7 +4,7 @@ from rsyscall.signal import *
 class TestSignal(TrioTestCase):
     async def test_sigaction(self) -> None:
         sa = Sigaction(Sighandler.DFL)
-        ptr = await self.process.ram.ptr(sa)
+        ptr = await self.process.task.ptr(sa)
         await self.process.task.sigaction(SIG.WINCH, ptr, None)
         await self.process.task.sigaction(SIG.WINCH, None, ptr)
         out_sa = await ptr.read()

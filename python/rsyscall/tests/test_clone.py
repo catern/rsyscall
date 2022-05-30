@@ -43,19 +43,19 @@ class TestClone(TrioTestCase):
         await child2.check()
 
     async def test_async(self) -> None:
-        epoller = await Epoller.make_root(self.child.ram, self.child.task)
+        epoller = await Epoller.make_root(self.child.task)
         await do_async_things(self, epoller, self.child)
 
     async def test_nest_async(self) -> None:
         process = await self.child.clone(CLONE.FILES)
-        epoller = await Epoller.make_root(process.ram, process.task)
+        epoller = await Epoller.make_root(process.task)
         await do_async_things(self, epoller, process)
         await process.exit(0)
 
     async def test_unshare_async(self) -> None:
         await self.child.unshare(CLONE.FILES)
         process = await self.child.clone(CLONE.FILES)
-        epoller = await Epoller.make_root(process.ram, process.task)
+        epoller = await Epoller.make_root(process.task)
         await process.unshare(CLONE.FILES)
         await do_async_things(self, epoller, process)
         await process.exit(0)
@@ -82,8 +82,8 @@ class TestClone(TrioTestCase):
             pass
 
     async def test_signal_queue(self) -> None:
-        epoller = await Epoller.make_root(self.child.ram, self.child.task)
-        sigfd = await AsyncSignalfd.make(self.child.ram, self.child.task, epoller, Sigset({SIG.INT}))
+        epoller = await Epoller.make_root(self.child.task)
+        sigfd = await AsyncSignalfd.make(self.child.task, epoller, Sigset({SIG.INT}))
         sigevent = sigfd.next_signal
         await self.child.pid.kill(SIG.INT)
         await sigevent.wait()
@@ -97,6 +97,6 @@ class TestCloneUnshareFiles(TrioTestCase):
 
     async def test_nest_async(self) -> None:
         process = await self.child.fork()
-        epoller = await Epoller.make_root(process.ram, process.task)
+        epoller = await Epoller.make_root(process.task)
         await do_async_things(self, epoller, process)
         await process.exit(0)

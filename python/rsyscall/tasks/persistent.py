@@ -94,7 +94,6 @@ import struct
 import os
 from dataclasses import dataclass
 import logging
-from rsyscall.memory.ram import RAM
 
 from rsyscall.monitor import ChildPidMonitor
 from rsyscall.epoller import Epoller, AsyncFileDescriptor
@@ -285,27 +284,26 @@ async def clone_persistent(
 
     """
     listening_sock = await parent.task.socket(AF.UNIX, SOCK.STREAM)
-    await listening_sock.bind(await parent.ram.ptr(await SockaddrUn.from_path(parent, path)))
+    await listening_sock.bind(await parent.task.ptr(await SockaddrUn.from_path(parent, path)))
     await listening_sock.listen(1)
     child_pid, task = await clone_child_task(
-        parent.task, parent.ram, parent.connection, parent.loader, parent.monitor,
+        parent.task, parent.connection, parent.loader, parent.monitor,
         CLONE.FILES|CLONE.FS|CLONE.SIGHAND,
         lambda sock: Trampoline(parent.loader.persistent_server_func, [sock, sock, listening_sock]))
     listening_sock_handle = listening_sock.move(task)
-    ram = RAM(task, parent.ram.allocator.inherit(task))
 
     ## create the new persistent task
-    epoller = await Epoller.make_root(ram, task)
-    signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
+    epoller = await Epoller.make_root(task)
+    signal_block = SignalBlock(task, await task.ptr(Sigset({SIG.CHLD})))
     # TODO use an inherited signalfd instead
-    child_monitor = await ChildPidMonitor.make(ram, task, epoller, signal_block=signal_block)
+    child_monitor = await ChildPidMonitor.make(task, epoller, signal_block=signal_block)
     return PersistentProcess(Process(
-        task, ram,
-        parent.connection.inherit(task, ram),
+        task,
+        parent.connection.inherit(task),
         parent.loader,
         epoller,
         child_monitor,
-        parent.environ.inherit(task, ram),
+        parent.environ.inherit(task),
         stdin=parent.stdin.for_task(task),
         stdout=parent.stdout.for_task(task),
         stderr=parent.stderr.for_task(task),

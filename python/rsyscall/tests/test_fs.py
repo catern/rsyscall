@@ -18,13 +18,13 @@ class TestFS(TrioTestCase):
         await self.tmpdir.cleanup()
 
     async def test_copy(self) -> None:
-        source_file = await self.process.task.open(await self.process.ram.ptr(self.tmpdir/"source"), O.RDWR|O.CREAT)
+        source_file = await self.process.task.open(await self.process.task.ptr(self.tmpdir/"source"), O.RDWR|O.CREAT)
         data = b'hello world'
-        buf: Pointer[bytes] = await self.process.ram.ptr(data)
+        buf: Pointer[bytes] = await self.process.task.ptr(data)
         valid, rest = await source_file.write(buf)
         buf = valid + rest
         await source_file.lseek(0, SEEK.SET)
-        dest_file = await self.process.task.open(await self.process.ram.ptr(self.tmpdir/"dest"), O.RDWR|O.CREAT)
+        dest_file = await self.process.task.open(await self.process.task.ptr(self.tmpdir/"dest"), O.RDWR|O.CREAT)
 
         process = await self.process.fork()
         cat = await self.process.environ.which("cat")
@@ -37,17 +37,17 @@ class TestFS(TrioTestCase):
         self.assertEqual(await (await dest_file.read(buf))[0].read(), data)
 
     async def test_getdents(self) -> None:
-        dirfd = await self.process.task.open(await self.process.ram.ptr(self.tmpdir), O.DIRECTORY)
-        dent_buf = await self.process.ram.malloc(DirentList, 4096)
+        dirfd = await self.process.task.open(await self.process.task.ptr(self.tmpdir), O.DIRECTORY)
+        dent_buf = await self.process.task.malloc(DirentList, 4096)
         valid, rest = await dirfd.getdents(dent_buf)
         self.assertCountEqual([dirent.name for dirent in await valid.read()], ['.', '..'])
         dent_buf = valid + rest
 
         text = b"Hello world!"
-        name = await self.process.ram.ptr("hello")
+        name = await self.process.task.ptr("hello")
 
         write_fd = await dirfd.openat(name, O.WRONLY|O.CREAT)
-        buf = await self.process.ram.ptr(text)
+        buf = await self.process.task.ptr(text)
         written, _ = await write_fd.write(buf)
 
         read_fd = await dirfd.openat(name, O.RDONLY)
@@ -60,18 +60,18 @@ class TestFS(TrioTestCase):
 
     async def test_getdents_noent(self) -> None:
         "getdents on a removed directory returns ENOENT/FileNotFoundError"
-        name = await self.process.ram.ptr(self.tmpdir/"foo")
+        name = await self.process.task.ptr(self.tmpdir/"foo")
         await self.process.task.mkdir(name)
         dirfd = await self.process.task.open(name, O.DIRECTORY)
         await self.process.task.rmdir(name)
-        buf = await self.process.ram.malloc(DirentList, 4096)
+        buf = await self.process.task.malloc(DirentList, 4096)
         with self.assertRaises(FileNotFoundError):
             await dirfd.getdents(buf)
 
     async def test_readlinkat_non_symlink(self) -> None:
         f = await self.process.task.open(await self.process.ptr("."), O.PATH)
-        empty_ptr = await self.process.ram.ptr("")
-        ptr = await self.process.ram.malloc(str, 4096)
+        empty_ptr = await self.process.task.ptr("")
+        ptr = await self.process.task.malloc(str, 4096)
         with self.assertRaises(FileNotFoundError):
             await f.readlinkat(empty_ptr, ptr)
 
@@ -89,23 +89,23 @@ class TestFS(TrioTestCase):
 
     async def test_readlink_proc(self) -> None:
         f = await self.process.task.open(await self.process.ptr("."), O.PATH)
-        path_ptr = await self.process.ram.ptr(f"/proc/self/fd/{int(f)}")
-        ptr = await self.process.ram.malloc(str, 4096)
+        path_ptr = await self.process.task.ptr(f"/proc/self/fd/{int(f)}")
+        ptr = await self.process.task.malloc(str, 4096)
         await f.readlinkat(path_ptr, ptr)
 
     async def test_which(self) -> None:
         names = []
         for i in range(5):
-            name = await self.process.ram.ptr(self.tmpdir/f"dir{i}")
+            name = await self.process.task.ptr(self.tmpdir/f"dir{i}")
             names.append(name)
             await self.process.task.mkdir(name)
-        cache = ExecutablePathCache(self.process.task, self.process.ram, [str(name.value) for name in names])
+        cache = ExecutablePathCache(self.process.task, [str(name.value) for name in names])
 
         with self.assertRaises(ExecutableNotFound):
             await cache.which("foo")
         with self.assertRaises(ExecutableNotFound):
             await cache.which("foo")
-        fd = await self.process.task.open(await self.process.ram.ptr(names[2].value/"foo"), O.CREAT)
+        fd = await self.process.task.open(await self.process.task.ptr(names[2].value/"foo"), O.CREAT)
         await fd.fchmod(0o700)
         await cache.which("foo")
         

@@ -19,7 +19,6 @@ import os
 import typing as t
 from dataclasses import dataclass
 import rsyscall.memory.allocator as memory
-from rsyscall.memory.ram import RAM
 from rsyscall.handle import Pointer, Task
 from rsyscall.signal import SIG, Sigaction, Sighandler
 from rsyscall.sys.socket import AF, SOCK
@@ -95,21 +94,21 @@ async def _make_local_process() -> Process:
         far.PidNamespace(pid.id),
     )
     task.sysif = LocalSyscall(task)
-    ram = RAM(task, await memory.AllocatorClient.make_allocator(task))
+    task.allocator = await memory.AllocatorClient.make_allocator(task)
     epfd = await task.epoll_create()
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
         await trio.lowlevel.wait_readable(epfd.near.number)
     trio_system_wait_readable = TrioSystemWaitReadable(epfd.near.number)
     set_trio_system_wait_readable(trio_system_wait_readable)
-    epoller = Epoller.make_subsidiary(ram, epfd, trio_system_wait_readable.wait)
+    epoller = Epoller.make_subsidiary(epfd, trio_system_wait_readable.wait)
     process = Process(
-        task, ram,
-        await FDPassConnection.make(task, ram, epoller),
+        task,
+        await FDPassConnection.make(task, epoller),
         NativeLoader.make_from_symbols(task, lib),
         epoller,
-        await ChildPidMonitor.make(ram, task, epoller),
-        Environment.make_from_environ(task, ram, {**os.environ}),
+        await ChildPidMonitor.make(task, epoller),
+        Environment.make_from_environ(task, {**os.environ}),
         stdin=task.make_fd_handle(near.FileDescriptor(0)),
         stdout=task.make_fd_handle(near.FileDescriptor(1)),
         stderr=task.make_fd_handle(near.FileDescriptor(2)),
@@ -125,7 +124,7 @@ async def _initialize() -> Process:
     # alternative; wiping out the signal handlers from within the children after
     # they've been created still leaves a window for the signal handler to run.
     import readline
-    await thr.task.sigaction(SIG.WINCH, await thr.ram.ptr(Sigaction(Sighandler.DFL)), None)
+    await thr.task.sigaction(SIG.WINCH, await thr.task.ptr(Sigaction(Sighandler.DFL)), None)
     return thr
 
 local_process: Process = trio.run(_initialize)

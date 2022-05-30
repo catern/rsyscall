@@ -7,7 +7,6 @@ from rsyscall.epoller import Epoller, AsyncFileDescriptor
 from rsyscall.handle import FileDescriptor, WrittenPointer, Pointer, Task
 from rsyscall.handle.fd import _close
 from rsyscall.loader import Trampoline, NativeLoader
-from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.path import Path
@@ -43,24 +42,24 @@ async def write_user_mappings(thr: Process, uid: int, gid: int,
         in_namespace_gid = gid
     procself = Path("/proc/self")
 
-    uid_map = await thr.task.open(await thr.ram.ptr(procself/"uid_map"), O.WRONLY)
-    await uid_map.write(await thr.ram.ptr(f"{in_namespace_uid} {uid} 1\n".encode()))
+    uid_map = await thr.task.open(await thr.task.ptr(procself/"uid_map"), O.WRONLY)
+    await uid_map.write(await thr.task.ptr(f"{in_namespace_uid} {uid} 1\n".encode()))
     await uid_map.close()
 
-    setgroups = await thr.task.open(await thr.ram.ptr(procself/"setgroups"), O.WRONLY)
-    await setgroups.write(await thr.ram.ptr(b"deny"))
+    setgroups = await thr.task.open(await thr.task.ptr(procself/"setgroups"), O.WRONLY)
+    await setgroups.write(await thr.task.ptr(b"deny"))
     await setgroups.close()
 
-    gid_map = await thr.task.open(await thr.ram.ptr(procself/"gid_map"), O.WRONLY)
-    await gid_map.write(await thr.ram.ptr(f"{in_namespace_gid} {gid} 1\n".encode()))
+    gid_map = await thr.task.open(await thr.task.ptr(procself/"gid_map"), O.WRONLY)
+    await gid_map.write(await thr.task.ptr(f"{in_namespace_gid} {gid} 1\n".encode()))
     await gid_map.close()
 
 async def do_cloexec_except(thr: Process, excluded_fds: t.Set[near.FileDescriptor]) -> None:
     "Close all CLOEXEC file descriptors, except for those in a whitelist. Would be nice to have a syscall for this."
     # it's important to do this so we can't try to inherit the fds that we close here
     thr.task.fd_table.remove_inherited()
-    buf = await thr.ram.malloc(DirentList, 4096)
-    dirfd = await thr.task.open(await thr.ram.ptr("/proc/self/fd"), O.DIRECTORY)
+    buf = await thr.task.malloc(DirentList, 4096)
+    dirfd = await thr.task.open(await thr.task.ptr("/proc/self/fd"), O.DIRECTORY)
     excluded_fds.add(dirfd.near)
     async def maybe_close(fd: near.FileDescriptor) -> None:
         flags = await _fcntl(thr.task.sysif, fd, F.GETFD)
@@ -85,7 +84,6 @@ class Process:
     "A central class holding everything necessary to work with some process, along with various helpers"
     def __init__(self,
                  task: Task,
-                 ram: RAM,
                  connection: Connection,
                  loader: NativeLoader,
                  epoller: Epoller,
@@ -97,7 +95,6 @@ class Process:
     ) -> None:
         self.task = task
         "The `Task` associated with this process"
-        self.ram = ram
         self.epoller = epoller
         self.connection = connection
         "This process's `rsyscall.network.connection.Connection`"
@@ -114,7 +111,6 @@ class Process:
 
     def _init_from(self, thr: Process) -> None:
         self.task = thr.task
-        self.ram = thr.ram
         self.epoller = thr.epoller
         self.connection = thr.connection
         self.loader = thr.loader
@@ -151,7 +147,7 @@ class Process:
         `bytes` will be written out as they are, and `str` and `os.PathLike` will be null-terminated.
 
         """
-        return await self.ram.malloc(cls, size) # type: ignore
+        return await self.task.malloc(cls, size) # type: ignore
 
     @t.overload
     async def ptr(self, data: T_has_serializer) -> WrittenPointer[T_has_serializer]: ...
@@ -168,7 +164,7 @@ class Process:
         As a special case for convenience, `bytes`, `str`, and `os.PathLike` are also supported;
         `bytes` will be written out as they are, and `str` and `os.PathLike` will be null-terminated.
         """
-        return await self.ram.ptr(data)
+        return await self.task.ptr(data)
 
     async def make_afd(self, fd: FileDescriptor, set_nonblock: bool=False) -> AsyncFileDescriptor:
         """Make an AsyncFileDescriptor; make it nonblocking if `set_nonblock` is True.
@@ -180,7 +176,7 @@ class Process:
         """
         if set_nonblock:
             await fd.fcntl(F.SETFL, O.NONBLOCK)
-        return await AsyncFileDescriptor.make(self.epoller, self.ram, fd)
+        return await AsyncFileDescriptor.make(self.epoller, fd)
 
     async def open_async_channels(self, count: int) -> t.List[t.Tuple[AsyncFileDescriptor, FileDescriptor]]:
         "Calls self.connection.open_async_channels; see `Connection.open_async_channels`"
@@ -208,11 +204,11 @@ class Process:
         """
         if isinstance(path, Path):
             out: t.Optional[Path] = path
-            fd = await self.task.open(await self.ram.ptr(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
+            fd = await self.task.open(await self.task.ptr(path), O.WRONLY|O.TRUNC|O.CREAT, mode=mode)
         else:
             out = None
             fd = path
-        to_write: Pointer = await self.ram.ptr(os.fsencode(text))
+        to_write: Pointer = await self.task.ptr(os.fsencode(text))
         while to_write.size() > 0:
             _, to_write = await fd.write(to_write)
         await fd.close()
@@ -229,22 +225,22 @@ class Process:
         helper for that specific pattern, rather than getsockname on its own.
 
         """
-        written_addr_ptr = await self.ram.ptr(addr)
+        written_addr_ptr = await self.task.ptr(addr)
         await sock.bind(written_addr_ptr)
-        sockbuf_ptr = await sock.getsockname(await self.ram.ptr(Sockbuf(written_addr_ptr)))
+        sockbuf_ptr = await sock.getsockname(await self.task.ptr(Sockbuf(written_addr_ptr)))
         addr_ptr = (await sockbuf_ptr.read()).buf
         return await addr_ptr.read()
 
     async def mkdir(self, path: Path, mode=0o755) -> Path:
         "Make a directory at this path"
-        await self.task.mkdir(await self.ram.ptr(path))
+        await self.task.mkdir(await self.task.ptr(path))
         return path
 
     async def read_to_eof(self, fd: FileDescriptor) -> bytes:
         "Read this file descriptor until we get EOF, then return all the bytes read"
         data = b""
         while True:
-            read, rest = await fd.read(await self.ram.malloc(bytes, 4096))
+            read, rest = await fd.read(await self.task.malloc(bytes, 4096))
             if read.size() == 0:
                 return data
             # TODO this would be more efficient if we batched our memory-reads at the end
@@ -278,29 +274,26 @@ class Process:
         manpage: clone(2)
         """
         child_pid, task = await clone_child_task(
-            self.task, self.ram, self.connection, self.loader, self.monitor,
+            self.task, self.connection, self.loader, self.monitor,
             flags, lambda sock: Trampoline(self.loader.server_func, [sock, sock]))
-        ram = RAM(task,
-                  self.ram.allocator.inherit(task),
-        )
         if flags & CLONE.NEWPID:
             # if the new process is pid 1, then CLONE_PARENT isn't allowed so we can't use inherit_to_child.
             # if we are a reaper, than we don't want our child CLONE_PARENTing to us, so we can't use inherit_to_child.
             # in both cases we just fall back to making a new ChildPidMonitor for the child.
-            epoller = await Epoller.make_root(ram, task)
+            epoller = await Epoller.make_root(task)
             # this signal is already blocked, we inherited the block, um... I guess...
             # TODO handle this more formally
-            signal_block = SignalBlock(task, await ram.ptr(Sigset({SIG.CHLD})))
-            monitor = await ChildPidMonitor.make(ram, task, epoller, signal_block=signal_block)
+            signal_block = SignalBlock(task, await task.ptr(Sigset({SIG.CHLD})))
+            monitor = await ChildPidMonitor.make(task, epoller, signal_block=signal_block)
         else:
-            epoller = self.epoller.inherit(ram)
+            epoller = self.epoller.inherit(task)
             monitor = self.monitor.inherit_to_child(task)
         process = ChildProcess(Process(
-            task, ram,
-            self.connection.inherit(task, ram),
+            task,
+            self.connection.inherit(task),
             self.loader,
             epoller, monitor,
-            self.environ.inherit(task, ram),
+            self.environ.inherit(task),
             stdin=self.stdin.inherit(task),
             stdout=self.stdout.inherit(task),
             stderr=self.stderr.inherit(task),
@@ -429,7 +422,7 @@ class ChildProcess(Process):
         """
         filename_ptr = await self.ptr(path)
         argv_ptr = await self.ptr(ArgList([await self.ptr(arg) for arg in argv]))
-        envp_ptr = await self.environ.as_arglist(self.ram)
+        envp_ptr = await self.environ.as_arglist(self.task)
         await self.task.execve(filename_ptr, argv_ptr, envp_ptr, command=command)
         return self.pid
 
@@ -461,7 +454,7 @@ class ChildProcess(Process):
         sigmask: t.Set[SIG] = set()
         for block in inherited_signal_blocks:
             sigmask = sigmask.union(block.mask)
-        await self.task.sigprocmask((HowSIG.SETMASK, await self.ram.ptr(Sigset(sigmask))))
+        await self.task.sigprocmask((HowSIG.SETMASK, await self.task.ptr(Sigset(sigmask))))
         if not env_updates:
             # use execv if we aren't updating the env, as an optimization.
             return await self.execv(path, argv, command=command)

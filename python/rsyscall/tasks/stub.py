@@ -44,7 +44,6 @@ import trio
 from dataclasses import dataclass
 import logging
 import rsyscall.memory.allocator as memory
-from rsyscall.memory.ram import RAM
 import rsyscall.nix as nix
 from rsyscall.epoller import Epoller, AsyncFileDescriptor, AsyncReadBuffer
 from rsyscall.monitor import ChildPidMonitor
@@ -79,7 +78,7 @@ class StubServer:
     async def listen_on(cls, process: Process, path: Path) -> StubServer:
         "Start listening on the passed-in path for stub connections."
         sockfd = await process.make_afd(await process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        addr = await process.ram.ptr(await SockaddrUn.from_path(process, path))
+        addr = await process.task.ptr(await SockaddrUn.from_path(process, path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
         return StubServer(sockfd, process)
@@ -123,7 +122,7 @@ async def _setup_stub(
      (access_data_sock, passed_data_sock)] = await process.open_async_channels(2)
     # memfd for setting up the futex
     futex_memfd = await process.task.memfd_create(
-        await process.ram.ptr(Path("child_robust_futex_list")))
+        await process.task.ptr(Path("child_robust_futex_list")))
     # send the fds to the new process
     connection_fd, make_connection = await process.connection.prep_fd_transfer()
     iovec = await process.ptr(IovecList([await process.malloc(bytes, 1)]))
@@ -159,24 +158,21 @@ async def _setup_stub(
         access_syscall_sock,
         remote_syscall_fd,
     )
-    allocator = await memory.AllocatorClient.make_allocator(base_task)
+    base_task.allocator = await memory.AllocatorClient.make_allocator(base_task)
     base_task.sigmask = Sigset({SIG(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})
-    ram = RAM(base_task,
-              allocator)
     # TODO I think I can maybe elide creating this epollcenter and instead inherit it or share it, maybe?
     # I guess I need to write out the set too in describe
-    epoller = await Epoller.make_root(ram, base_task)
-    child_monitor = await ChildPidMonitor.make(ram, base_task, epoller)
-    connection = make_connection(base_task, ram,
+    epoller = await Epoller.make_root(base_task)
+    child_monitor = await ChildPidMonitor.make(base_task, epoller)
+    connection = make_connection(base_task,
                                  base_task.make_fd_handle(near.FileDescriptor(describe_struct.connecting_fd)))
     new_process = Process(
         task=base_task,
-        ram=ram,
         connection=connection,
         loader=NativeLoader.make_from_symbols(base_task, describe_struct.symbols),
         epoller=epoller,
         child_monitor=child_monitor,
-        environ=Environment.make_from_environ(base_task, ram, environ),
+        environ=Environment.make_from_environ(base_task, environ),
         stdin=base_task.make_fd_handle(near.FileDescriptor(0)),
         stdout=base_task.make_fd_handle(near.FileDescriptor(1)),
         stderr=base_task.make_fd_handle(near.FileDescriptor(2)),

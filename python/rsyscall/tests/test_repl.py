@@ -15,7 +15,7 @@ class TestREPL(TrioTestCase):
 
     async def test_repl(self) -> None:
         sockfd = await self.process.make_afd(await self.process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))
-        addr = await self.process.ram.ptr(await SockaddrUn.from_path(self.process, self.sock_path))
+        addr = await self.process.task.ptr(await SockaddrUn.from_path(self.process, self.sock_path))
         await sockfd.handle.bind(addr)
         await sockfd.handle.listen(10)
         clientfd = await self.process.make_afd(await self.process.socket(AF.UNIX, SOCK.STREAM|SOCK.NONBLOCK))

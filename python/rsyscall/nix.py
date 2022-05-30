@@ -45,7 +45,7 @@ async def _exec_tar_copy_tree(src: ChildProcess, src_paths: t.Sequence[t.Union[s
     dest_tar = await dest.environ.which("tar")
     src_tar = await dest.environ.which("tar")
 
-    await dest.task.chdir(await dest.ram.ptr(dest_path))
+    await dest.task.chdir(await dest.task.ptr(dest_path))
     await dest.task.inherit_fd(dest_fd).dup2(dest.stdin)
     await dest_fd.close()
     dest_child = await dest.exec(dest_tar.args("--extract"))

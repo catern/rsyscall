@@ -11,6 +11,6 @@ class TestEventfd(TrioTestCase):
 
     async def test(self) -> None:
         inval = Int64(10)
-        written, _ = await self.fd.write(await self.process.ram.ptr(inval))
+        written, _ = await self.fd.write(await self.process.task.ptr(inval))
         read, _ = await self.fd.read(written)
         self.assertEqual(inval, await read.read())

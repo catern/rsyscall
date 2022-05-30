@@ -12,12 +12,12 @@ class TestIP(TrioTestCase):
         addr = await self.process.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
         await sockfd.listen(10)
 
-        real_addr = await self.process.ram.ptr(addr)
+        real_addr = await self.process.task.ptr(addr)
         clientfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await clientfd.connect(real_addr)
         connfd = await sockfd.accept()
 
-        in_data = await self.process.ram.ptr(b"hello")
+        in_data = await self.process.task.ptr(b"hello")
         written, _ = await clientfd.write(in_data)
         valid, _ = await connfd.read(written)
         self.assertEqual(in_data.value, await valid.read())
@@ -26,11 +26,11 @@ class TestIP(TrioTestCase):
         sockfd = await self.process.task.socket(AF.INET, SOCK.DGRAM)
         addr = await self.process.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
 
-        real_addr = await self.process.ram.ptr(addr)
+        real_addr = await self.process.task.ptr(addr)
         clientfd = await self.process.task.socket(AF.INET, SOCK.DGRAM)
         await clientfd.connect(real_addr)
 
-        in_data = await self.process.ram.ptr(b"hello")
+        in_data = await self.process.task.ptr(b"hello")
         written, _ = await clientfd.write(in_data)
         valid, _ = await sockfd.read(written)
         self.assertEqual(in_data.value, await valid.read())
@@ -38,7 +38,7 @@ class TestIP(TrioTestCase):
     async def test_write_to_unconnected(self) -> None:
         sockfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
         with self.assertRaises(BrokenPipeError):
-            await sockfd.write(await self.process.ram.ptr(b"hello"))
+            await sockfd.write(await self.process.task.ptr(b"hello"))
 
     @unittest.skip("This test is slow and non-deterministic")
     async def test_send_is_not_atomic(self) -> None:
@@ -56,7 +56,7 @@ class TestIP(TrioTestCase):
         addr = await self.process.bind_getsockname(sockfd, SockaddrIn(0, '127.0.0.1'))
         await sockfd.listen(10)
 
-        real_addr = await self.process.ram.ptr(addr)
+        real_addr = await self.process.task.ptr(addr)
         clientfd = await self.process.task.socket(AF.INET, SOCK.STREAM)
         await clientfd.connect(real_addr)
         connfd = await sockfd.accept()

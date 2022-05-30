@@ -263,19 +263,22 @@ class FDTable(rsyscall.far.FDTable):
         if task is not None:
             await self.gc_using_task(task)
 
+from rsyscall.memory.allocation_interface import AllocatorInterface
+
 class FileDescriptorTask(rsyscall.far.Task, t.Generic[T_fd]):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
                  near_pid: rsyscall.near.Pid,
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
+                 allocator: AllocatorInterface,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
         if not isinstance(fd_table, FDTable):
             raise Exception("fd_table", fd_table, "needs to be an", FDTable,
                             "to work with a", FileDescriptorTask)
         self.fd_table: FDTable
-        super().__init__(sysif, near_pid, fd_table, address_space, pidns)
+        super().__init__(sysif, near_pid, fd_table, address_space, allocator, pidns)
 
     def __post_init__(self) -> None:
         super().__post_init__()

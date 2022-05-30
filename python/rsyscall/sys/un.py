@@ -40,7 +40,7 @@ class SockaddrUn(Sockaddr):
             return SockaddrUn(os.fsencode(path))
         except PathTooLongError:
             ppath = Path(path)
-            fd = await thr.task.open(await thr.ram.ptr(ppath.parent), O.PATH)
+            fd = await thr.task.open(await thr.task.ptr(ppath.parent), O.PATH)
             return SockaddrUnProcFd(fd, ppath.name)
 
     T = t.TypeVar('T', bound='SockaddrUn')

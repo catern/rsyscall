@@ -11,7 +11,6 @@ from rsyscall.epoller import AsyncFileDescriptor
 from rsyscall.handle import Stack, WrittenPointer, Pointer, FutexNode, FileDescriptor, Task, FutexNode
 from rsyscall.loader import Trampoline, NativeLoader
 from rsyscall.memory.allocator import Arena
-from rsyscall.memory.ram import RAM
 from rsyscall.monitor import AsyncChildPid, ChildPidMonitor
 from rsyscall.network.connection import Connection
 from rsyscall.struct import Int32
@@ -37,7 +36,7 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-async def launch_futex_monitor(ram: RAM,
+async def launch_futex_monitor(
                                loader: NativeLoader, monitor: ChildPidMonitor,
                                futex_pointer: WrittenPointer[FutexNode]) -> AsyncChildPid:
     """Launch a process to wait on a futex; then we monitor the process to monitor the futex
@@ -59,7 +58,7 @@ async def launch_futex_monitor(ram: RAM,
         loader.futex_helper_func, [
             int(futex_pointer.near + ffi.offsetof('struct futex_node', 'futex')),
             futex_pointer.value.futex]))
-    stack_buf = await ram.malloc(Stack, 4096)
+    stack_buf = await monitor.cloning_task.malloc(Stack, 4096)
     stack = await stack_buf.write_to_end(stack_value, alignment=16)
     futex_pid = await monitor.clone(CLONE.VM|CLONE.FILES, stack)
     # wait for futex helper to SIGSTOP itself,
@@ -74,7 +73,6 @@ async def launch_futex_monitor(ram: RAM,
 
 async def clone_child_task(
         task: Task,
-        ram: RAM,
         connection: Connection,
         loader: NativeLoader,
         monitor: ChildPidMonitor,
@@ -113,9 +111,9 @@ async def clone_child_task(
     arena = Arena(await task.mmap(4096*2, PROT.READ|PROT.WRITE, MAP.SHARED))
     # Create the stack we'll need, and the zero-initialized futex
     stack_value = loader.make_trampoline_stack(trampoline)
-    stack_buf = await ram.malloc(Stack, 4096)
+    stack_buf = await task.malloc(Stack, 4096)
     stack = await stack_buf.write_to_end(stack_value, alignment=16)
-    futex_pointer = await ram.ptr(FutexNode(None, Int32(1)))
+    futex_pointer = await task.ptr(FutexNode(None, Int32(1)))
     # it's important to start the processes in this order, so that the process
     # process is the first process started; this is relevant in several
     # situations, including unshare(NEWPID) and manipulation of ns_last_pid
@@ -127,7 +125,7 @@ async def clone_child_task(
     # we use the ctid futex, which will be cleared on process exit or exec; we shutdown
     # access_sock when the ctid futex is cleared, to get an EOF.
     # We do this with launch_futex_monitor and a background coroutine.
-    futex_pid = await launch_futex_monitor(ram, loader, monitor, futex_pointer)
+    futex_pid = await launch_futex_monitor(loader, monitor, futex_pointer)
     async def shutdown_access_sock_on_futex_process_exit():
         try:
             await futex_pid.waitpid(W.EXITED)
@@ -161,4 +159,5 @@ async def clone_child_task(
         access_sock,
         remote_sock_handle,
     )
+    child_task.allocator = task.allocator.inherit(child_task)
     return child_pid, child_task

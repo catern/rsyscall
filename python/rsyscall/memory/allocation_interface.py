@@ -2,7 +2,9 @@
 from __future__ import annotations
 import abc
 import typing as t
-from rsyscall.sys.mman import MemoryMapping
+if t.TYPE_CHECKING:
+    from rsyscall.handle import Task
+    from rsyscall.sys.mman import MemoryMapping
 
 class UseAfterFreeError(Exception):
     pass
@@ -51,4 +53,25 @@ class AllocationInterface:
     def free(self, mapping: MemoryMapping) -> None:
         "Invalidate this allocation and return its range for re-allocation; must be called explicitly."
         pass
+
+class OutOfSpaceError(Exception):
+    "Raised by malloc if the allocation request couldn't be satisfied."
+    pass
+
+class AllocatorInterface:
+    "A memory allocator; raises OutOfSpaceError if there's no more space."
+    async def bulk_malloc(self, sizes: t.List[t.Tuple[int, int]]) -> t.Sequence[t.Tuple[MemoryMapping, AllocationInterface]]:
+        # A naive bulk allocator
+        return [await self.malloc(size, alignment) for size, alignment in sizes]
+
+    @abc.abstractmethod
+    async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]: ...
+
+    def inherit(self, task: Task) -> AllocatorInterface:
+        raise Exception("can't be inherited:", self)
+
+class UnusableAllocator(AllocatorInterface):
+    "A memory allocator; raises OutOfSpaceError if there's no more space."
+    async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, AllocationInterface]:
+        raise NotImplementedError
 

@@ -211,12 +211,15 @@ class ProcessPid(ChildPid):
             name = 'ChildPid'
         return f"{name}({self.near}, parent={self.task})"
 
+from rsyscall.memory.allocation_interface import AllocatorInterface
+
 class PidTask(rsyscall.far.Task):
     def __init__(self,
                  sysif: rsyscall.near.SyscallInterface,
                  pid: t.Union[rsyscall.near.Pid, Pid],
                  fd_table: rsyscall.far.FDTable,
                  address_space: rsyscall.far.AddressSpace,
+                 allocator: AllocatorInterface,
                  pidns: rsyscall.far.PidNamespace,
     ) -> None:
         if isinstance(pid, Pid):
@@ -227,7 +230,7 @@ class PidTask(rsyscall.far.Task):
             near_pid = pid
             self.pid = Pid(self, pid)
             self.parent_task = None
-        super().__init__(sysif, near_pid, fd_table, address_space, pidns)
+        super().__init__(sysif, near_pid, fd_table, address_space, allocator, pidns)
 
     async def clone(self, flags: CLONE,
                     # these two pointers must be adjacent; the end of the first is the start of the
