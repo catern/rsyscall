@@ -32859,3 +32859,809 @@ okay, finger works.
 so where are we going to actually do the freeing? hmm
 
 having a reference to something that can do it in each allocation is... kind of annoying and wasteful
+
+but how else can we do it with del, hmm...
+well... we could... have the pointer do it, which already has the task...
+
+ummmm. hmm.
+that's sketchy.
+
+oh, yeah, so the mapping internally has a task.
+so if we knew the memory mapping in the allocation, we'd be good...
+
+so what we could do is... return the range of freed offsets?
+but that kind of defeats the point, which is that we'd rather do this computation with the MemoryMapping object...
+
+actually, returning an offset at all here seems kinda SKETCH,
+since it's so unsafe...
+maybe we should return the...
+some kind of handle.
+
+okay wait but sysif refers to pointers...
+
+um, hm.
+
+oh! maybe we can pass in the memorymapping when we call free?
+that's easy enough...
+
+hmmMMmmm it's annoying...
+
+urgh but... i really shouldn't have two instance of memory mapping actually!
+
+maybe i should just put it only in Allocation... hmmmmmmmm
+
+pluggable allocators is convenient so I shouldn't just merge Allocation and Pointer... or should I... there are two valid flags...
+
+that does not in fact stop me from having pluggable allocators...
+
+okay maybe I should just move memory mapping in there?
+
+okay yeah actually... maybe I should, because right now we're not really meaningfully using the mapping separately... hmmm...
+
+okay, the way we'd use the mapping separately is if we supported mapping the same mapping in two places and uses allocations from it... hmmmmmmmmm
+
+so let's think about 1. why we'd do that and 2. how we'd do that if we moved mapping into the allocation
+
+well, so, we'd do it to...
+
+oh heh right now we're just punting on it kinda anyway...
+
+so we'd do it to, say, share constant data (like paths/environments) between not-same-VM same-kernel processes
+
+or, maybe, to improve our memory reading/writing for not-same-VM same-kernel processes, by just reading/writing in the main process.
+
+those are both... kinda tricky...
+sharing constant data is much harder (or, maybe it's easy since we can do it with shared)
+or, no, maybe it's just more special-cased.
+
+in any case, memory rw, how about that?
+
+so... we'd need to be able to...
+inside... the sysif, maybe??
+recognize that a mapping is... also in the parent...
+
+possibly by the pointer itself carrying, like... some info...
+the allocation can say, here is... a packet of information about the corresponding mmap in the parent.
+
+oh and we'd just use that instead of the local mmap to do the read/write?
+right so we'd just have two mappings inside the allocation or something, and one would be for read/writing,
+and all would be well.
+
+yeah that actually seems pretty easy, if we put the mapping in the allocation.
+
+then again:
+if *after* allocating we want to say "hey here's another mapping of this file"...
+
+ah okay. so here's the thing.
+the allocator needs some mapping with which to operate on the memory.
+the allocations themselves can know that.
+
+the *pointer* can then have some other mapping which is for the same file,
+to ensure that syscalls in its task can access the memory, or whatever.
+
+and then, we're good.
+(we might want to move shared-ness to the allocation at some point...
+so that it works across multiple not-shared-VM processes when we have multiprocess mappings of the same file)
+
+okay, so I feel good about moving it, and deleting the mapping stuff in pointer.
+
+oh wait um, sharing the central task the read/write part won't work because it won't be serialized...
+
+the mapping needs to be specialized to the task owning the pointer...
+even if we're sharing the allocator...
+
+okay... sure...
+
+so i guess we could
+
+just give up and have the duplicate mapping...
+
+but then again, it would be nice to not send all the madvs through the main process... hmm...
+
+also it's useful/cool to see when something gets deallocated in a specific task in strace...
+
+we could have... another layer... wrapping allocation... which is guaranteed to have the right mapping...
+athat is, a mapping which actually matches the offset. hmmmmmmmmmmmmmmmmmmmmm
+
+okay... okay...... i think...
+
+passing in the mapping at free time is reasonable...
+
+basically we're saying, "use this mapping/task to free it", sure.
+which is fine because there's many possible mappings/tasks that could be used.
+
+uggh so we undo everything we did and just pass in the thing to free
+
+okay so. split and merge don't affect the pages...
+
+ugggggggh okayyyyy what the helllll
+
+how do we do these range operations in a simple and easy way...
+
+ugh but the range could be empty also.. well that's fine...
+
+hey we can actually just do to_page, that might work well...
+okaaaaaaay.
+soooooo.
+
+now we need to find the intersection..............
+
+which... we do by...
+
+taking the max of the address...
+
+and then taking the min of the end.
+
+waaaait a second maybe we should just do it all outside?
+
+sure seems easy
+
+uggghhghhhh okay i'm having some trio issue with... the system task dying somehow and needing to be restarted...
+
+possibly due to this running in __del__....
+
+okay let's, ugh, trio is so bad.
+
+I can see why being called from __del__ would be tricky
+(since, that __del__ could just randomly happen during ...),
+let me think about my problem a little more
+
+since, that __del__ could just randomly happen during ...
+during a time when no trio.run call is happening?
+
+except... by resetting here I'm... running it until its first shift, as expected...
+
+and then that shift goes into the thing
+
+which... mmmm...
+
+like, the question is... why are these __del__s not happening when we're not inside a trio.run?
+
+hhhmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm
+
+oh wait um.
+
+we aren't running under trio when we're in __del__
+
+ah hm. hm.
+
+shift always calls it even if we aren't...
+
+yeah this is bad... hmmmmmmmmmmm..............
+
+i mean obviously... if we're in reset... and we call it in shift...
+
+it's bad...
+
+and again obviously we can only really call it from... the right place... hmmm....
+** next
+okay so allocation is ready to be made sync.
+
+can we do the same thing with writing?
+and then make .ptr sync???
+
+and then we could maybe just... add the allocator into the task and...
+start accepting non-pointers in all the syscalls and automatically calling stuff
+
+okay, so that would simplify one half of getsockname quite a bit.
+
+okay so we're beyond where we were before, because we have synchronous allocation.
+
+so we can think about, how to simplify and pipeline the rest...
+
+so we would like to be able to read the buf all in one go, maybe..
+
+well more specifically, optimally,
+we would sequence the read immediately after getsockname.
+
+hmmmmmmmmmmmmmmmmmmmm can we actually make writes synchronous?
+cuz what about errors while writing...
+
+well let's suppose we don't, and instead we just... pipeline all the stuff.
+** shower thought
+i should do the writing in the run loop so I can not do infallible read if writing fails
+
+er the recv I think I mean
+** later thoughts
+oh hm. i guess the reason i do the recv outside is so that I can use the higher-level syscall wrapper
+
+oh okay i can't skip the infallible recv if writing fails. i have to do the writing. if the writing fails, the syscall connection is broken.
+
+so...
+basically what I want to do is ignore the failure here but ensure that subsequent calls fail...
+
+so i could do a hangup on the fd if the write fails, I guess.
+
+ssssure...
+
+anyway so if I that, I can make write synchronous.
+it manifests failure by making subsequent calls fail, which is fine and good since it only has visible effects when we make subsequent calls
+** TODO actually make allocation sync
+** TODO actually make writes sync
+(i think making writes sync makes it very clear that they're pipelined, which is interesting)
+** TODO figure out how to make the read side/retval side easier
+desiderata:
+- we want reads to be pipelined so they happen immediately after the syscall
+- we don't want to always do that (probably?), we want to give users control,
+  because sometimes that's excessive bandwidth usage
+- sometimes data is just going to be passed to another syscall so we don't want to do useless reads
+
+i don't care about any other aspects of the API I guess, I'm primarily interested in *improved efficiency*,
+and that might as a side effect allow me to make the API nicer.
+
+so... yeah. let's think about how we can make the reads pipelined, in a super-uniform and good way...
+maybe if there's some kind of pointer which we automatically read after a syscall writing into it...?
+basically we do "pointer.write" in the syscall and, it triggers a read?
+
+that's one approach, sure... very uniform, not very typed...
+
+i mean okay... like, this relates to the typed interfaces we were talking about.
+
+if the side-effect is that...
+
+  SYSCALL_DEFINE3_RET(bytes_written_or_error(buf),
+                      read, unsigned int, fd,
+                      writable_user_buf(count), buf, size_t, count)
+
+okay so the notion is that... the function returns the number of bytes written.
+BUT the writable buf itself is inherently something which might be written to.
+
+so it's something which we might want to pipeline the reading back from.
+
+so, sure, automatically triggering a read inside the syscall wrapper...
+
+and then somehow storing the data...
+
+basically... we say the data in the pointer is invalidated after the write, normally.
+but if it was something which automatically re-loads it..
+
+then we can pull the data out.
+
+so I guess... we replace WrittenPointer with KnownPointer...
+
+and then... this... well it doesn't stay a KnownPointer,
+it gets a temporarily invalid state...
+
+basically when we read() it...
+
+well okay so when we pipeline the read, we want store the *raw bytes*,
+but not actually try to *deserialize it*.
+
+we can only deserialize it after we have the remaining information:
+how much of the buffer is valid.
+
+which... here with Sockbuf... we do readable_split...
+to learn what part of the bytes is valid.
+sure, and we do the same with the read() syscall.
+
+so... what we want is...
+there's a buffer in here and... maybe... we somehow...
+*start* a read but then wait for it later... sure?
+
+right right we absolutely need to be able to wait for it later, future-style.
+because that's how read(2) works.
+we'll get the syscall result first,
+and then we need to wait for the pipelined read.
+
+so basically, we mutable stick a Future into the Pointer,
+and the next time we call read(), we just wait for that Future.
+
+and... basically, this can be a setting on the pointer,
+such that every time we call ...
+
+some new function I guess?
+
+something which we call after starting the _read call but before getting the result back.
+_write_serialized_to or something
+_write_submitted_to
+
+for this kind of pointer,
+every time we call _write_submitted_to,
+we initiate a read...
+
+okay so. this is weird though, we'd rather have full efficiency...
+maybe the *read side* is where we need the ability to send a little x86 over and execute that??
+
+full efficiency would be, you just run some code on the remote side which picks how much stuff to write back over the fd.
+and we read exactly that much stuff.
+
+the approach i'm imagining, is very wasteful of bandwidth relative to that.
+but... not *that* wasteful, maybe...
+
+and actually it's not too different from how the cache hierarchy of memory works anyway.
+that already wastes a bunch of bandwidth on sending data we don't care about!
+
+yeah e.g. for linked list chaining, the prefetcher is silly and loads a bunch of data,
+or for a null-terminated string or a length-prefixed string or whatever,
+it's not loading the right stuff, it's using dumb heuristics and letting the CPU handle it.
+https://youtu.be/bjRDaaGlER8?t=1066
+
+so, being wasteful of bandwidth... is not that bad.
+
+okay so.
+we initiate reads on stuff that syscalls will write to, automatically.
+
+then...
+but wait, the data could change...
+but wait, no, it couldn't, not if we're careful to call _write_submitted_to.
+
+okay so if we do that...
+what does this get us? how do we then simplify reading?
+
+we can't very well make... reading synchronous...
+can we?
+
+well, so, when would we want to read data?
+only when a syscall has written to it...
+
+oh also, sending all data back to the main thread is... would be... lame...
+but again CPUs do it... but still, we shouldn't capitulate in that way.
+
+so, only when a syscall has written to a pointer do we want to read it...
+
+actually, we even have that invariant with the ReadablePointer.
+
+so... what's returned is..
+the concept that something has been written,
+and the actual amount written.
+
+but we don't have to wait for the syscall to complete to know that something has been written...
+mmmmmmmmm....
+
+
+wait can I just... have the sockbuf do the read internally?
+i.e. instead of two user-visible reads, just one?
+
+okay so sure I could do that, but still we'd like to have those two underlying reads,
+be pipelined ahead of time by the syscall...
+
+how do we indicate that we're going to want to read the result...
+and that we should begin preparing it immediately...
+hmmmmmmmmmmmmmm...........
+
+basically we want to... prompt the thing to returning an additional value
+or doing some minor but easy additional computation on intermediate products...
+
+so, i mean, if we just always pipelined getsockname and everything,
+then we wouldn't have any such problems...
+cuz doing it externally would also be... fast...? right??
+
+except... we do need the results...
+so if we did it externally... we'd need to say...
+
+"hey we're returning a pair of pointers, one of which is readable,
+but the size of it depends on some syscall...
+so you need to wait for the result...
+but you can do an early prefetch still..."
+
+that seems weird...
+
+hmm...
+
+so... maybe... we'd return...
+
+the ability to trigger a prefetch, and the future for the pair of pointers?
+
+again it seems weird for the prefetch to be this implicit state thing...
+
+maybe the prefetch should return *the data*,
+wrapped up in some thing which has the serializer in it,
+and which... needs... the return value...
+of the syscall...
+
+um, but definitely having the prefetch return the yet-unserialized data is good.
+if we can somehow... encapsulate how the return value of a syscall is supposed to be used...
+
+right so the prefetch should return a "pointer" which has the "value"/data in it,
+but which is still not readable.
+
+the syscall needs to mark it readable for us to read it.
+
+so it's a bit weird, we need two values here,
+the syscall result and the pointer,
+both of which require waiting,
+so the exact setup with resets and so on, may be tricky.
+
+we can maybe just use run_all or something, might be fun.
+
+um how does that work with sockbuf...
+the sockbuf... well it's all readable i guess so we'll just mark it readable,
+then deserialize the value,
+then that will... return a pointer which can be read
+
+hey also we'd like getsockname to be pipelined with bind
+- bind and getsockname should, maybe be pipelined.. somehow... or at least it should be possible and easy...
+
+i guess that's just a matter of using run_all, which is fine
+
+so no worries about that
+
+we're still concerned about just, the return value of a single atomic syscall:
+
+getsockname, which looks like this:
+#+begin_src python
+sockbuf_ptr = await sock.getsockname(type(addr))
+addr_ptr = (await sockbuf_ptr.read()).buf
+addr = await addr_ptr.read()
+#+end_src
+and read which looks like this:
+#+begin_src python
+ptr, _ = await sock.read(bytes(4096))
+data = await ptr.read()
+#+end_src
+
+if we pipeline the reads, we don't need an await.
+well we do but... i dunno...
+we want to support pipelining the reads if we're going to get the data back
+
+cuz that's much more performant
+and if we pipeline the read then we can practically put the read inside the syscall...
+
+but wait what if we want to pipeline the passing to another syscall?
+that's certainly something we should support!
+
+perhaps we should have some kinda...
+thing returned which is...
+"this has been written by this syscall by the next time you run a syscall"
+
+but that's not actually true tho because the syscall can fail.
+
+still! the point of being able to pipeline to another syscall is a real concern
+
+after all that's, to state the obvious, the entire thing which we want to encourage users to do.
+
+so... we'd like to be able to get back the return value... in some not-yet-completed state...
+
+i mean, it's just... a matter of typing...
+
+actually! actually! actually!!!!
+
+pointers are basically already futures! because we have to read and wait on them!
+so if they bundle together the waiting for the syscall result! that would be interesting!
+
+and if we instead pass the pointer along to another syscall!
+then we're not waiting for the syscall result anyway!
+
+so! maybe if the returned pointer... waits for the syscall result... when we read it???
+hmmm...
+
+okay, sure, we *could* do that.
+
+like basically make a pointer into a future which waits for the syscall result,
+which means we can also choose to not wait and instead pass it to another syscall.
+
+but how does that help the API for the user?
+
+I do think that's appealing... in some sense...
+
+but suppose we did that, how would we improve the user API?
+
+i guess what we want *then* is... something which just synchronously returns the result...
+
+which honestly we can get just by reading the pointer at the end of the function;
+overloading the function so that if we pass in a pointer we get a pointer,
+and if we pass in a value we get a value.
+
+sure, but...
+how are we improving pipelining here?
+in the pointer mode, are we going to just always be pipelined, and not wait for the syscall return value, and return this syscall-result-pointer thing?
+i dunno if that seems like a good idea...
+
+but maybe it is...
+actually.
+
+could we even just make *syscalls* synchronous then?
+ugh.
+
+then so in the pointer mode you'd pass in a pointer and get back a pointer that you could pass along...
+
+okay but wait, let's keep in mind:
+it is not in fact *guaranteed* to be safe to pipeline syscalls in this way.
+if an earlier syscall returns a pointer to X and you want to use that in a later syscall,
+it is not in fact guaranteed that the later syscall will be perfectly happy if the X is an unitialized buffer
+
+we... could maybe figure out when that's safe in some way...
+
+but probably it's better to just use the allocations as the basis of pipelining:
+pass them in to multiple different stages, because we can't in fact use the return values.
+
+so, okay.
+in that world, all our syscalls are still asynchronous,
+and we just use run_all + allocations up front to do pipelining.
+
+no need to convert syscalls into returning any kind of future.
+(since again that future would only be useful to enforce "type-safe" pipelining, and "type-safe" pipelining *is not in fact safe*)
+
+okay.
+so let's just stick to the two modes, one which returns a value and one which returns a pointer.
+
+then it's just:
+#+begin_src python
+addr = await sock.getsockname(type(addr))
+#+end_src
+
+very easy for the user!
+
+so how do we implement this internally?
+that's the question I guess.
+
+hmmmmmmmmmmmmmmmmmmmmmmmmmm....
+
+i guess we... do some kind of...
+"read_no_deserialize"
+
+which reads without deserializing.
+
+and we do that in a run_all.
+
+and then after we have the result of the second entry, we supply the return value of the syscall (the first entry),
+and that *synchronously* can deserialize.
+
+okay, sure.
+
+but how do we handle sockbuf?
+
+maybe... it... um...
+
+so sockbuf *internally* does a readable split.
+like other things, it *tells us* what is readable...
+
+so that would imply some kind of write_submitted for those other things...
+maybe we would need to do it in the serializer...?
+hm, yeah, maybe we *could* just have another method in the serializer.
+
+OHH okay OK!!! here's what we do!!!
+
+we have a single read_no_deserialize call....
+
+WHICH INTERNALLY pipelines the two reads together!!
+
+in fact, I guess we could be doing this today with sockbuf_ptr.read! some kind of... read_completely, thing....
+
+(or i got the idea from kai that maybe I could extract the other pointer from pointer.serializer?)
+** thoughts
+So the pointer could ask the serializer if there's any optimistic reads it wants to do....
+
+Yes... Yes!!!
+
+This is what read optimistically will do!!!
+
+It will read it... Optimistically!!!
+
+And then, we will...
+Return a new pointer which can be readable split appropriately...
+
+And the serializer's read optimistically will return a new serializer....
+
+Which will be used inside the new pointer......
+
+Yes seems good seems good.
+
+And read optimistically will pipeline together the raw data read with the serializer read optimistically...
+
+
+And return a new pointer which is some kinda stored data pointer ....
+
+Which.. umm... Which.... Has I guess a readablevaluepointer variant too...
+
+Or wait ummmm...
+It's not even a stored data pointer, it's just a bundle of the bytes and the serializer...
+
+And we say readable split to discard the remaining data....
+And that just immediately returns the value, internally deserializing...
+** conclusion
+call it "prefetch"
+have it be recursive, it calls into the serializer which returns a new serializer
+the serializer just calls prefetch on its internal pointers
+
+it returns a new type of pointer, PrefetchedPointer, which is customized to only support read and have everything else break
+
+let's go ahead and make the overload of getsockname in case we get a better idea, and then gradually improve it...
+** TODO actually make allocation sync
+** TODO actually make writes sync
+(i think making writes sync makes it very clear that they're pipelined, which is interesting)
+** TODO add .prefetch to pointer
+which fetches the whole thing...
+even though it may not be readable
+
+maybe .fetch is a better name...
+the main thing is that we need confirmation it's readable before actually using that data
+
+this is the more important one for now, since both allocation and writes don't actually block despite being marked async.
+
+hmmmmmmmmmm
+
+implementing a no-op fetch...
+
+for the serializers which just need the task to deserialize... hmmm....
+is annoying to have to repeat...
+
+could we say, like... TaskSerializer?
+
+oh ummmmmmmmmmmmmmm..
+
+there's also Cmsg... which takes the class as well...
+
+but... that's... fine...?
+
+okay I don't understand what prefetch is,
+but let's just go ahead and implement it and use it on all the serializers
+
+okay done... now...
+
+we need to make the Value actually use it I guess.
+
+let's just allow value to be immediately read out of laziness
+
+** DONE add overload for getsockname which is value-based
+and does one round trip!
+
+and this will use .prefetch internally
+
+okay so... maybe we should make a...
+free function version...
+
+and the overload is just... a wrapper which handles allocation...
+
+certainly that would make my life easier in the implementation
+
+okay yeah let's do that.
+*** DONE move allocation into the task
+so... let's...
+
+just store the allocator in the Task...?
+
+or should the allocator be in the sysif, maybe??
+
+that might be cleaner...
+
+and closer to what I want to represent...
+
+okay so... first off... the allocator *uses* the task to make itself,
+by calling mmap...
+
+so how will we unravel that...
+
+okay... maybe we *should* just put it in the Task?
+oh but wait, we already have circular dependencies where the sysif and task depend on each other,
+this will just make that worse.
+
+two options:
+task or sysif.
+
+actually the task seems more justifiable and is simple.
+let's do it.
+
+aha okay we'll make RAM inherit from far.Task and anywhere we want to allocate,
+we'll use RAM instead of far.Task.
+
+perfect.
+
+ah! we'll just put the allocator in far.Task too.
+
+RAM will just have these helper methods, that's all.
+*** DONE get rid of mentions of "RAM" object
+just use task everywhere
+
+yikes there are a lot
+well not too many
+
+okay... okay so...
+
+if we want FDTasks and so on to be able to use the RAM...
+we need to put it lower in the inheritance hierarchy...
+so they are inheriting from it.
+
+yyyeah. i think so.
+maybe?
+like pids should be able to make syscalls which need to allcoate memory,
+that's the long and short of it.
+
+do they need to make *arbitrary* syscalls?
+no, just the ram ones.
+so...
+*** DONE write a lil test for it
+great!!
+* unrelated memory thing
+pointer.borrow
+
+woah!!!!!!!!!
+
+deleting a pointer requires a syscall...
+and we don't deallocate until the memory is freed...
+which means we already effectively have the borrow structure we want!!!!!!!
+that's cool!
+
+what about moving a pointer?
+how are we even going to support that...
+well i guess we don't need to move pointers really....
+
+but likewise, sharing makes a syscall.
+
+is this something we want to rely on?
+this structure of...
+pointers are single-threaded and modifying them requires a syscall in that thread,
+so it's safe to use them without pinning
+as long as you immediately make the syscall
+
+well let's just try it here
+
+wait okay.
+what about shared pointers?
+
+those can get wiped out. . . . .
+without. . . . .
+serializing in the task that's making the syscall.
+
+cuz we could call free with...
+another mapping? nope!
+each pointer is still specific to a given task,
+and freed only in that task.
+so we're still fine!
+
+no. wait.
+if we make a syscall with it in some other task,
+which we can do with a shared pointer weakening the check_address_space check,
+then we could free it in the original task
+and that wouldn't be sequenced.
+
+okay...
+
+and the core of shared is,
+we don't want to have to write some big data again (the env)
+when creating a fresh new task.
+
+it would be nice if we could just... do an mmap which duplicates another address...
+y'know like fork does
+cuz if we could do that, we could just copy the env thing into the new task,
+and still have task-specific pointers...
+
+and it would be fast: just a matter of making some new mappings, for read-only-ness
+i mean, shrug, maybe this approach to shared is wrong-headed anyway:
+we should be using a dedicated file which we mmap, maybe?
+which is... read only...
+
+something where we don't clear it on free...?
+
+but still, we'd close the file....
+so what we'd want is... something read-only...
+with... well, a refcount, ultimately.
+where when one task closes it, it doesn't influence others.
+but that's just exactly the pinning stuff.
+
+hmmm...
+if we could... copy some pages to another part of the mmapping...
+using copy-on-write...
+
+then those two ranges would be... independently managed and freed and everything.
+i mean, a full-fledged copy would be fine too;
+but doing copy-on-write is more efficient.
+
+so... one approach would be if we...
+have a memfd for the full range, then we just...
+MAP_PRIVATE the copied thing???
+ummm hmmmm we really want to copy extents in the file
+oh ho maybe... FICLONERANGE?
+yeah... hmmm...
+could be cool...
+
+but what's the likelihood it works on memfds lol
+
+okay, it doesn't work on memfds.
+let's table this whole idea for now,
+and just stick with Pointer.borrow
+
+#+begin_src python
+    def near_in(self, task: rsyscall.far.Task) -> rsyscall.near.Address:
+        """Return the task-local address of this pointer in this task, throwing if there is none
+
+        This should be passed immediately to at most one syscall; if other calls are made before
+        using the returned address, it may be invalid when it's finally used.
+
+        This relies on each pointer only being used
+
+        """
+        self.check_address_space(task)
+        return self.near
+#+end_src
+
