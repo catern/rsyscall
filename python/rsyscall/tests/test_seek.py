@@ -1,5 +1,7 @@
 from rsyscall.tests.trio_test_case import TrioTestCase
 from rsyscall.sys.stat import Stat
+from rsyscall.linux.fs import FI, FileCloneRange
+import errno
 
 class TestSeek(TrioTestCase):
     async def asyncSetUp(self) -> None:
@@ -28,3 +30,14 @@ class TestSeek(TrioTestCase):
         # size is now 4
         stat = await (await self.file.fstat(await self.process.malloc(Stat))).read()
         self.assertEqual(stat.size, 4)
+
+    async def test_ficlonerange(self) -> None:
+        await self.file.ftruncate(4096*2)
+        with self.assertRaises(OSError) as cm:
+            await self.file.ioctl(FI.CLONERANGE, await self.process.ptr(FileCloneRange(
+                src_fd=self.file,
+                src_offset=4096,
+                src_length=4096,
+                dest_offset=0,
+            )))
+        self.assertEqual(cm.exception.errno, errno.EOPNOTSUPP)

@@ -15,6 +15,9 @@ ffibuilder.set_source_pkgconfig(
 #include <linux/futex.h>
 #include <linux/fuse.h>
 #include <linux/memfd.h>
+// great, a bug, sys/mount has to be included before linux/fs or else the MS_ constants get defined twice
+#include <sys/mount.h>
+#include <linux/fs.h>
 #include <net/if.h>
 #include <netinet/ip.h>
 #include <netinet/ip.h>
@@ -30,7 +33,6 @@ ffibuilder.set_source_pkgconfig(
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/ptrace.h>
 #include <sys/resource.h>
@@ -324,6 +326,17 @@ struct signalfd_siginfo {
 #define W_OK ...
 #define X_OK ...
 #define F_OK ...
+
+// FICLONERANGE ioctl
+#define FICLONERANGE ...
+#define FICLONE ...
+
+struct file_clone_range {
+    int64_t  src_fd;
+    uint64_t src_offset;
+    uint64_t src_length;
+    uint64_t dest_offset;
+};
 
 // stat
 #define SYS_fstat ...
