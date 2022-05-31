@@ -121,7 +121,7 @@ async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -
     return [await fut.get() for fut in
             [Future.start(make()) for _ in range(count)]]
 
-async def run_all(callables: t.List[t.Callable[[], t.Awaitable[T]]]) -> t.List[T]:
-    "Call all the functions passed to it, and return all the results."
-    return [await fut.get() for fut in
-            [Future.start(func()) for func in callables]]
+async def run_all(awaitables: t.List[t.Awaitable[T]]) -> t.List[T]:
+    "Wait on all the awaitables passed to it, and return all the results."
+    futures = [Future.start(aw) for aw in awaitables]
+    return [await fut.get() for fut in futures]

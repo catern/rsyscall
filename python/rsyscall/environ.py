@@ -86,8 +86,7 @@ class ExecutablePathCache:
             nameptr = await self.ram.ptr(name)
             # do the lookup for 64 paths at a time, that seems like a good batching number
             for paths in chunks(self.paths, 64):
-                thunks = [functools.partial(self._check, path, nameptr) for path in paths]
-                results = await run_all(thunks) # type: ignore
+                results = await run_all([self._check(path, nameptr) for path in paths])
                 for path, result in zip(paths, results):
                     if result:
                         # path is set as the loop variable; python has no scope
