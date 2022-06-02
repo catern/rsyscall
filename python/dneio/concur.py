@@ -121,7 +121,25 @@ async def make_n_in_parallel(make: t.Callable[[], t.Awaitable[T]], count: int) -
     return [await fut.get() for fut in
             [Future.start(make()) for _ in range(count)]]
 
-async def run_all(awaitables: t.List[t.Awaitable[T]]) -> t.List[T]:
+T0 = t.TypeVar('T0')
+T1 = t.TypeVar('T1')
+T2 = t.TypeVar('T2')
+
+# use the same trick that typeshed uses for asyncio.gather to get nice types for run_all
+# https://github.com/python/typeshed/pull/1550
+@t.overload
+async def run_all(a0: t.Awaitable[T0], /) -> tuple[T0]: ...
+@t.overload
+async def run_all(a0: t.Awaitable[T0], a1: t.Awaitable[T1], /) -> tuple[T0, T1]: ...
+@t.overload
+async def run_all(a0: t.Awaitable[T0], a1: t.Awaitable[T1], a2: t.Awaitable[T2], /) -> tuple[T0, T1, T2]: ...
+
+# require that all the arguments be of the same type if we're passing more
+@t.overload
+async def run_all(a0: t.Awaitable[T], a1: t.Awaitable[T], a2: t.Awaitable[T], a3: t.Awaitable[T],
+                  /, *arest: t.Awaitable[T]) -> tuple[T]: ...
+
+async def run_all(*awaitables: t.Awaitable) -> tuple:
     "Wait on all the awaitables passed to it, and return all the results."
     futures = [Future.start(aw) for aw in awaitables]
-    return [await fut.get() for fut in futures]
+    return tuple([await fut.get() for fut in futures])
