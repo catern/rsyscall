@@ -24,14 +24,14 @@ struct options {
 };
 
 char hello[] = "hello world, I am the syscall server!\n";
-char read_failed[] = "rsyscall: read(infd, &request, sizeof(request)) failed\n";
-char write_failed[] = "rsyscall: write(outfd, &response, sizeof(response)) failed\n";
+char read_failed[] = "rsyscall: raw_read(infd, &request, sizeof(request)) failed\n";
+char write_failed[] = "rsyscall: raw_write(outfd, &response, sizeof(response)) failed\n";
 const int EINTR = 4;
 
-static long write(int fd, const void *buf, size_t count) {
+static long raw_write(int fd, const void *buf, size_t count) {
     return rsyscall_raw_syscall(fd, (long) buf, (long) count, 0, 0, 0, SYS_write);
 }
-static long read(int fd, void *buf, size_t count) {
+static long raw_read(int fd, void *buf, size_t count) {
     return rsyscall_raw_syscall(fd, (long) buf, (long) count, 0, 0, 0, SYS_read);
 }
 
@@ -40,10 +40,10 @@ static int read_request(const int infd, struct rsyscall_syscall *request)
     char* buf = (char*) request;
     size_t remaining = sizeof(*request);
     while (remaining) {
-        long const ret = read(infd, buf, remaining);
+        long const ret = raw_read(infd, buf, remaining);
         if (ret == -EINTR) continue;
         if (ret < 0) {
-	    write(2, read_failed, sizeof(read_failed) - 1);
+	    raw_write(2, read_failed, sizeof(read_failed) - 1);
 	    return ret;
 	}
         if (ret == 0) {
@@ -67,10 +67,10 @@ static int write_response(const int outfd, const int64_t response)
     char* data = (char*) &response;
     size_t remaining = sizeof(response);
     while (remaining) {
-        long const ret = write(outfd, data, remaining);
+        long const ret = raw_write(outfd, data, remaining);
         if (ret == -EINTR) continue;
         if (ret < 0) {
-	    write(2, write_failed, sizeof(write_failed) - 1);
+	    raw_write(2, write_failed, sizeof(write_failed) - 1);
 	    return ret;
 	}
         remaining -= ret;
@@ -81,7 +81,7 @@ static int write_response(const int outfd, const int64_t response)
 
 int rsyscall_server(const int infd, const int outfd)
 {
-    // write(2, hello, sizeof(hello) -1);
+    // raw_write(2, hello, sizeof(hello) -1);
     struct rsyscall_syscall request;
     int ret;
     for (;;) {
@@ -141,14 +141,14 @@ struct rsyscall_symbol_table rsyscall_symbol_table()
     return table;
 }
 
-static long close(int fd) {
+static int raw_close(int fd) {
     return rsyscall_raw_syscall(fd, 0, 0, 0, 0, 0, SYS_close);
 }
 
 int rsyscall_persistent_server(int infd, int outfd, const int listensock)
 {
     signal(SIGPIPE, SIG_IGN);
-    // write(2, hello_persist, sizeof(hello_persist) -1);
+    // raw_write(2, hello_persist, sizeof(hello_persist) -1);
     for (;;) {
 	rsyscall_server(infd, outfd);
         if (shutdown(infd, SHUT_RDWR) < 0) err(1, "shutdown(infd, SHUT_RDWR)");
@@ -159,15 +159,15 @@ int rsyscall_persistent_server(int infd, int outfd, const int listensock)
         // read the number of fds we should expect
         int nfds;
 	// TODO this could be a partial read
-	if (read(connsock, &nfds, sizeof(nfds)) != sizeof(nfds)) err(1, "read(connsock, &nfds)");
+	if (raw_read(connsock, &nfds, sizeof(nfds)) != sizeof(nfds)) err(1, "raw_read(connsock, &nfds)");
         // receive nfds
         int fds[nfds];
 	receive_fds(connsock, fds, nfds);
 	// write new fd numbers back
 	// TODO this could be a partial write, whatever
-	if (write(connsock, fds, sizeof(fds)) != sizeof(fds)) err(1, "write(connsock)");
+	if (raw_write(connsock, fds, sizeof(fds)) != sizeof(fds)) err(1, "raw_write(connsock)");
 	// close now-useless connsock
-	if (close(connsock) < 0) err(1, "close(connsock=%d)", connsock);
+	if (raw_close(connsock) < 0) err(1, "raw_close(connsock=%d)", connsock);
         // the first fd we received is the fd to serve on
 	infd = fds[0];
 	outfd = fds[0];
