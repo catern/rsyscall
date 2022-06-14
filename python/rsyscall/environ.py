@@ -44,7 +44,7 @@ class ExecutableNotFound(Exception):
 
 class ExecutablePathCache:
     "A cache of executables looked up on PATH."
-    def __init__(self, task: Task, paths: t.List[str]) -> None:
+    def __init__(self, task: Task, paths: t.Sequence[str | Path]) -> None:
         self.task = task
         self.paths = [Path(path) for path in paths]
         self.fds: t.Dict[Path, t.Optional[FileDescriptor]] = {}
@@ -108,11 +108,14 @@ class Environment:
     "A representation of Unix environment variables."
     @staticmethod
     def make_from_environ(task: Task, environment: t.Dict[str, str]) -> Environment:
-        return Environment(environment, ExecutablePathCache(task, environment.get("PATH", "").split(":")))
+        return Environment(task, environment, ExecutablePathCache(task, environment.get("PATH", "").split(":")))
 
-    def __init__(self, environment: t.Dict[str, str], path: ExecutablePathCache,
+    def __init__(self,
+                 task: Task,
+                 environment: t.Dict[str, str], path: ExecutablePathCache,
                  arglist_ptr: t.Optional[WrittenPointer[ArgList]]=None,
     ) -> None:
+        self.task = task
         self.data = environment
         self.sh = Command(Path("/bin/sh"), ['sh'], {})
         "The POSIX-required `/bin/sh`, as a `rsyscall.Command`"
@@ -146,6 +149,10 @@ class Environment:
 
     async def which(self, name: str) -> Command:
         "Locate an executable with this name on `PATH`; throw `ExecutableNotFound` on failure."
+        if self.task.mountns is not self.path.task.mountns:
+            # this inherited ExecutablePathCache is not in the same mountns as us anymore,
+            # start doing path lookups ourselves
+            self.path = ExecutablePathCache(self.task, self.path.paths)
         return await self.path.which(name)
 
     def inherit(self, task: Task) -> Environment:
@@ -155,7 +162,7 @@ class Environment:
         they're shared between all `rsyscall.thread`es.
 
         """
-        return Environment(dict(self.data), self.path, self.arglist_ptr)
+        return Environment(task, dict(self.data), self.path, self.arglist_ptr)
 
     async def as_arglist(self, task: Task) -> WrittenPointer[ArgList]:
         if self.arglist_ptr is None:
