@@ -1,4 +1,4 @@
 let
   pkgs = import ../pinned.nix;
 in
-pkgs.python39Packages.rsyscall
+pkgs.python310Packages.rsyscall

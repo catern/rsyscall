@@ -13,7 +13,11 @@ self: super: {
   python39 = super.python39.override {
     packageOverrides = pythonOverrides;
   };
+  python310 = super.python310.override {
+    packageOverrides = pythonOverrides;
+  };
 
   python38Packages = self.python38.pkgs;
   python39Packages = self.python39.pkgs;
+  python310Packages = self.python310.pkgs;
 }
