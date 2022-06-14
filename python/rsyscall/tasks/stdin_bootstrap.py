@@ -108,8 +108,10 @@ async def stdin_bootstrap(
     # numbers from.
     # oh hey we can conveniently dump the inode numbers with getdents!
     pidns = parent.task.pidns
+    # we assume mount namespace is not shared (can't hurt)
+    mountns = far.MountNamespace(pid)
     pid = near.Pid(pid)
-    base_task = Task(pid, fd_table, address_space, pidns)
+    base_task = Task(pid, fd_table, address_space, pidns, mountns)
     remote_syscall_fd = base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_fd))
     base_task.sysif = SyscallConnection(
         logger.getChild(str(pid)),

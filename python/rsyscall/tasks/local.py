@@ -92,6 +92,7 @@ async def _make_local_process() -> Process:
         pid, handle.FDTable(pid.id),
         far.AddressSpace(pid.id),
         far.PidNamespace(pid.id),
+        far.MountNamespace(pid.id),
     )
     task.sysif = LocalSyscall(task)
     task.allocator = await memory.AllocatorClient.make_allocator(task)

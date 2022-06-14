@@ -97,6 +97,19 @@ class PidNamespace:
     """
     creator_pid: int
 
+@dataclass(eq=False)
+class MountNamespace:
+    """An opaque representation of an existing mount namespace
+
+    This is the namespace in which mount lookups happen, which means it's also the
+    namespace that determines how paths are resolved.
+
+    Like `PidNamespace`, we take `creator_pid` as an argument for debugging purposes,
+    despite that not being a unique identifier, and compare with "is".
+
+    """
+    creator_pid: int
+
 class NamespaceMismatchError(Exception):
     "An object was used with a task whose namespaces it doesn't match"
     pass
@@ -152,6 +165,7 @@ class Task(RAMTask):
     address_space: AddressSpace
     allocator: AllocatorInterface
     pidns: PidNamespace
+    mountns: MountNamespace
 
     def _borrow_optional(self, stack: contextlib.ExitStack, ptr: t.Optional[Pointer]
     ) -> t.Optional[rsyscall.near.Address]:

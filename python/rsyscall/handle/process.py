@@ -221,6 +221,7 @@ class PidTask(rsyscall.far.Task):
                  address_space: rsyscall.far.AddressSpace,
                  allocator: AllocatorInterface,
                  pidns: rsyscall.far.PidNamespace,
+                 mountns: rsyscall.far.MountNamespace,
     ) -> None:
         if isinstance(pid, Pid):
             near_pid = pid.near
@@ -230,7 +231,7 @@ class PidTask(rsyscall.far.Task):
             near_pid = pid
             self.pid = Pid(self, pid)
             self.parent_task = None
-        super().__init__(sysif, near_pid, fd_table, address_space, allocator, pidns)
+        super().__init__(sysif, near_pid, fd_table, address_space, allocator, pidns, mountns)
 
     async def clone(self, flags: CLONE,
                     # these two pointers must be adjacent; the end of the first is the start of the

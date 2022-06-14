@@ -207,12 +207,14 @@ class Task(
                  fd_table: FDTable,
                  address_space: rsyscall.far.AddressSpace,
                  pidns: rsyscall.far.PidNamespace,
+                 mountns: rsyscall.far.MountNamespace,
     ) -> None:
         super().__init__(
             UnusableSyscallInterface(),
             t.cast(rsyscall.near.Pid, pid), fd_table, address_space,
             UnusableAllocator(),
             pidns,
+            mountns,
         )
 
     def _file_descriptor_constructor(self, fd: rsyscall.near.FileDescriptor) -> FileDescriptor:
@@ -222,10 +224,15 @@ class Task(
     def _make_fresh_address_space(self) -> None:
         self.address_space = rsyscall.far.AddressSpace(self.pid.near.id)
 
+    def _make_fresh_mount_namespace(self) -> None:
+        self.mountns = rsyscall.far.MountNamespace(self.pid.near.id)
+
     async def unshare(self, flags: CLONE) -> None:
         if flags & CLONE.FILES:
             await self.unshare_files()
             flags ^= CLONE.FILES
+        if flags & CLONE.NEWNS:
+            self._make_fresh_mount_namespace()
         if flags:
             await _unshare(self.sysif, flags)
 

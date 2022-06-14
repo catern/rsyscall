@@ -271,10 +271,12 @@ async def ssh_bootstrap(
     # TODO we should get this from the SSHHost, this is usually going
     # to be common for all connections and we should express that
     new_pid_namespace = far.PidNamespace(new_pid)
+    new_mountns = far.MountNamespace(new_pid)
     new_pid = near.Pid(new_pid)
     new_base_task = Task(
         new_pid, handle.FDTable(new_pid), new_address_space,
         new_pid_namespace,
+        new_mountns,
     )
     handle_remote_syscall_fd = new_base_task.make_fd_handle(near.FileDescriptor(describe_struct.syscall_sock))
     new_base_task.sysif = SyscallConnection(

@@ -146,8 +146,12 @@ async def clone_child_task(
         fd_table = task.fd_table
     else:
         fd_table = handle.FDTable(child_pid.pid.near.id, task.fd_table)
+    if flags & CLONE.NEWNS:
+        mountns = far.MountNamespace(child_pid.pid.near.id)
+    else:
+        mountns = task.mountns
     child_task = Task(
-        child_pid.pid, fd_table, task.address_space, pidns)
+        child_pid.pid, fd_table, task.address_space, pidns, mountns)
     child_task.sigmask = task.sigmask
     # Move ownership of the remote sock into the task and store it so it isn't closed
     remote_sock_handle = remote_sock.inherit(child_task)
