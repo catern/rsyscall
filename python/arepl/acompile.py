@@ -37,7 +37,7 @@ async def {wrapper_name}():
     try:
         pass
     finally:
-        __builtins__.locals()
+        __builtins__.globals().update(__builtins__.locals())
 """, filename="<internal_wrapper>", mode="single")
     try_block = wrapper.body[0].body[0] # type: ignore
     try_block.body = astob.body
@@ -57,6 +57,4 @@ async def {wrapper_name}():
     exec(compile(wrapper, '<input>', 'single'), global_vars)
     func = global_vars[wrapper_name]
     del global_vars[wrapper_name]
-    # don't create a new local variable scope
-    func.__code__ = func.__code__ .replace(co_flags=func.__code__.co_flags & ~inspect.CO_NEWLOCALS)
     return func()

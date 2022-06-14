@@ -1,6 +1,8 @@
 import unittest
 from arepl import *
 import typing as t
+import arepl.aeval
+import arepl.astcodeop
 
 T = t.TypeVar('T')
 def await_pure(awaitable: t.Awaitable[T]) -> T:
@@ -31,3 +33,9 @@ class TestPure(unittest.TestCase):
             self.assertEqual(await eval('foo*4'), 4)
             self.assertEqual(await eval('await anoop()'), None)
         await_pure(test())
+
+    def test_newlocals(self) -> None:
+        astob = arepl.astcodeop.ast_compile_interactive("foo = 42")
+        global_vars = {}
+        await_pure(arepl.aeval.eval_single(astob, global_vars))
+        self.assertEqual(global_vars['foo'], 42)
