@@ -783,6 +783,7 @@ struct fuse_init_in {
 	uint32_t	minor;
 	uint32_t	max_readahead;
 	uint32_t	flags;
+        ...;
 };
 
 struct fuse_init_out {
