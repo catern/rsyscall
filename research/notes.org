@@ -32353,6 +32353,11 @@ and have as_arglist create those. sure, seems good.
 HAH wrong we DO prevent cross-address-space envp screwups, checking at exec time!
 
 amazing, it's done. it's all done.
+
+so... i guess what I can do now is... make more abstracted syscall things?
+i also need to move the allocator into task...
+
+oh and I need to make the epoller readbuffer reuse pages
 *** TODO should exceptions from shift functions be thrown back into the coroutine?
 maybe, maybe, yeah...
 
@@ -32679,3 +32684,178 @@ since they can't be MSG.NOSIGNAL'd...
 
 yes okay. we'll convert everything (or at least SyscallConnection) to use socketpairs
 then use MSG.NOSIGNAL
+* abstractions
+** shower thoughts
+okay so I can just move bind_getsockname to FD - ezpz.
+
+i should work on pipelining that first before other things
+
+pipelining allocation is tricky, because it blocks inherently
+
+getsockname, say - if you have everything allocated, you can pipeline the writes, the getsockname, and then pipeline the reads.
+
+and more, you can call getsockname as a Future and it will all be synchronously submitted right then, perfectly pipelined.
+
+but if you allocate, then...
+
+you can't put things after getsockname because it won't be sequenced.
+
+likewise, and more importantly, with bind...
+
+if we allocate the sockaddr, then we can't just put the bind in a Future...
+
+is there some way we can synchronously allocate memory?
+
+that would save us even more...
+
+i guess we'd need to know the address space up front... and allocate from it...
+
+we could just throw if we get OOM.
+that... actually could work.
+
+i mean, it would be nice if we could somehow super-block, lol
+when we OOM, we block extra hard, so even though we were started with reset, we actually block the parent
+
+is this multi-prompt continuations?
+
+it's just that we want to block in this non-blocking context, lol
+
+what if we put memory allocation in the sysif? hah
+** further thought
+okay, wait...
+what if we just always pipeline getsockname?
+
+uhhh... well it can fail, so we don't want to do that, right?
+
+we... need to be able to get the result...
+
+but it would be appealing to have it always pipelined or something.
+
+we want to have a robust and powerful ability to just, call functions,
+and have them be pipelined.
+* remembering what I was doing
+so supporting allocation that can never fail at all.
+that would allow even more pipelining.
+
+and the reason to do this is so that pipelined syscalls which internally allocate memory,
+don't do unnecessary blocking.
+
+BUT, in the meantime, we can just do the allocation outside.
+
+that... prevents us from calling multiple pipelined things in sequence.
+but it's not necessarily an issue for the first step?
+
+um does it prevent us from calling multiple pipelined things in sequence?
+no, right?
+
+well the issue is if i'm doing resets.
+like, if I'm converting async syscalls into sync start-a-syscalls.
+
+okay. okay. throwing if we get OOM.
+I actually kind of like that, because it matches how, like, existing GC'd languages work...
+we just need to make sure that we... can allocate more memory...?
+
+I guess if we wrap around the allocation space it's fine
+um. yeah. reusing existing allocated things and just allocating in that space...
+
+but I guess that implies not returning pages to the OS, which will be a hassle...
+
+oh okay what if we make sure to always maintain at least 128MB or something of free space?
+if we do an allocation and it gets us in danger, we do the mmap then.
+
+so then we only OOM if we allocate fast enough...?
+and also we ... um...
+
+oh wait wait okay. we could *unmap* the old unused memory,
+but then remap it.
+basically we want to *discard the backing page*,
+but leave the virtual memory in use.
+
+okay.
+so then we can just wrap around in emergencies!
+and we indeed have the condition that we only OOM when current_amount_allocated exceeds ever_mapped_space
+and we'll do new virtual mappings to avoid that...
+
+okay. or we can just not bother with new virtual mappings...?
+the wrapping around is... potentially dubious.
+skipping over pages may be expensive.
+but then again, our allocations should be extremely sparse!
+
+and we can make them arbitrarily sparse by having huge amounts of virtual memory.
+which means the fraction of time spent on skipping over allocated pages goes to 0!
+
+okay. this seems good. and a clean way to make allocation safely synchronous.
+again, it will only fail in the event of:
+our current live memory exceeds the entire virtual space we've allocated.
+(which we can make even huger, shrug)
+
+we just need to support wrapping around.
+and, the wrapping, is fine, again, because the fraction of allocated space in virtual space, goes to 0,
+so wrapping doesn't significantly reduce allocation efficiency.
+
+so:
+- support wrapping around (which again is bounded in cost)
+- support *discarding the page* - I think this is MADV_REMOVE? or MADV_FREE?
+  urgh MADV_FREE maybe only works on anonymous mappings.
+  well let's hope MADV_REMOVE works on non-file-backed MAP_SHARED.
+
+um they both work? am I doing this right?
+a ha no I wasn't.
+MADV_REMOVE works though, great
+
+hmm so now how will I skip over allocated pages...
+
+what is a simple algorithmo for dis...
+
+well. we're at some position...
+and we have some data...
+and we want to allocate and then move to the next position which is definitely f..ree...
+
+no, we'll move at the start, because that way if something gets freed in between it works.
+
+so... we're looking at some address and some data...
+and we want to determine if it's used...
+
+okay maybe we can have some linked list
+
+of all allocations... simple...
+and freeing pages is not so bad
+
+oh but also the linked list needs to be weakrefs... or something...
+
+so yeah a linked list I think is easy... with only allocations on it...
+
+okay so we can do something where, we ask the mapping,
+give me the sub-mapping that contains this range (the allocation and its two neighboring allocations),
+then we can do the operation: "give me this mapping minus that mapping",
+for this - prev - next
+
+then that's what we can free
+
+um wait so how does allocation work?
+how do we find the position in the linked list...
+
+I guess what we can do is... we save the last thing we allocated...
+then we check if there's space after that...
+
+it may be freed by the time we progress, but that's fine!
+we just need it as a... pointer into the list.
+
+okay, but what if it's freed, then the thing *after it* is freed,
+and so we don't have a pointer into the list anymore...
+
+maybe I should use a list of arenas instead?
+but then if I free up a page it won't get freed. how could we achieve that?
+
+also that's complex and slow, it means i have to check each arena for space, or waste a bunch of space
+
+okay actually the finger seems good, maybe we can make it be invisible?
+mmm... hard.
+well i don't actually care about preserving the ability to merge with something you weren't split from.
+so....
+
+okay, finger works.
+** freeing pages
+so where are we going to actually do the freeing? hmm
+
+having a reference to something that can do it in each allocation is... kind of annoying and wasteful
