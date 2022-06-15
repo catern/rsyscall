@@ -29,6 +29,48 @@ from dataclasses import dataclass
 from rsyscall.sys.mman import PROT, MAP, MemoryMapping
 logger = logging.getLogger(__name__)
 
+@dataclass(eq=False)
+class ListStart:
+    next: Allocation | Finger | ListEnd
+
+    @property
+    def valid(self) -> bool:
+        return False
+
+    @property
+    def end(self) -> int:
+        return 0
+
+@dataclass(eq=False)
+class ListEnd:
+    prev: Allocation | Finger | ListStart
+    start: int
+
+    @property
+    def valid(self) -> bool:
+        return False
+
+@dataclass(eq=False)
+class Finger:
+    prev: Allocation | ListStart
+    next: Allocation | ListEnd
+
+    def alloc_before(self, start: int, end: int) -> Allocation:
+        return Allocation.add_after(start, end, self.prev)
+
+    @property
+    def valid(self) -> bool:
+        return False
+
+def make_list(size: int) -> tuple[ListStart, Finger, ListEnd]:
+    head = ListStart(t.cast(ListEnd, None))
+    tail = ListEnd(head, size)
+    head.next = tail
+    finger = Finger(head, tail)
+    finger.prev.next = finger
+    finger.next.prev = finger
+    return head, finger, tail
+
 # We set eq=False because two distinct zero-length allocations can be identical in all
 # their fields, yet they should not be treated as equal, such as in calls to .index()
 @dataclass(eq=False)
@@ -41,42 +83,46 @@ class Allocation(AllocationInterface):
     See AllocationInterface for more about this interface.
 
     """
-    arena: Arena
     start: int
     end: int
+    prev: Allocation | Finger | ListStart
+    next: Allocation | Finger | ListEnd
     valid: bool = True
 
     def offset(self) -> int:
         if not self.valid:
-            try:
-                idx = self.arena.allocations.index(self)
-            except ValueError:
-                idx = -1
             raise UseAfterFreeError(
                 "This allocation has already been freed; refusing to return its offset for use in pointers",
                 self,
-                "idx", idx,
-                "self.arena.allocations", self.arena.allocations,
             )
         return self.start
 
     def free(self) -> None:
         if self.valid:
             self.valid = False
-            self.arena.allocations.remove(self)
+            self.prev.next = self.next
+            self.next.prev = self.prev
 
     def size(self) -> int:
         return self.end - self.start
 
+    @staticmethod
+    def add_after(start: int, end: int,
+                  prev: Allocation | Finger | ListStart,
+                  valid: bool = True) -> Allocation:
+        next = prev.next
+        self = Allocation(start, end, prev, next, valid=valid)
+        self.prev.next = self
+        self.next.prev = self
+        return self
+
     def split(self, size: int) -> t.Tuple[Allocation, Allocation]:
         if not self.valid:
             raise Exception("can't split freed allocation")
-        idx = self.arena.allocations.index(self)
         splitpoint = self.start+size
-        first = Allocation(self.arena, self.start, splitpoint, valid=False)
-        second = Allocation(self.arena, splitpoint, self.end, valid=False)
         self.free()
-        self.arena.allocations[idx:idx] = [first, second]
+        first = Allocation.add_after(self.start, splitpoint, self.prev, valid=False)
+        second = Allocation.add_after(splitpoint, self.end, first, valid=False)
         first.valid = True
         second.valid = True
         return first, second
@@ -88,29 +134,21 @@ class Allocation(AllocationInterface):
             raise Exception("self.merge(other) was called when self is already freed")
         if not other.valid:
             raise Exception("self.merge(other) was called when other is already freed")
-        if self.arena != other.arena:
-            # in general, merge is only supported if they started out from the same allocation
-            raise Exception("merging allocations from two different arenas - not supported!")
-        arena = self.arena
+        if not self.next is other:
+            raise Exception("can't merge an allocation with anything other than its immediate neighbor!")
         if self.end != other.start:
             raise Exception("to merge allocations, our end", self.end, "must equal their start", other.start)
-        a_idx = arena.allocations.index(self)
-        b_idx = arena.allocations.index(other)
-        if a_idx + 1 != b_idx:
-            raise Exception("allocations are unexpectedly at non-adjacent indices",
-                            a_idx, self, id(self), b_idx, other, id(other))
-        new = Allocation(self.arena, self.start, other.end, valid=False)
         self.free()
         other.free()
-        arena.allocations.insert(a_idx, new)
+        new = Allocation.add_after(self.start, other.end, self.prev, valid=False)
         new.valid = True
         return new
 
     def __str__(self) -> str:
         if self.valid:
-            return f"Alloc({str(self.arena)}, {self.start}, {self.end})"
+            return f"Alloc({self.start}, {self.end})"
         else:
-            return f"Alloc(FREED, {str(self.arena)}, {self.start}, {self.end})"
+            return f"Alloc(FREED, {self.start}, {self.end})"
 
     def __repr__(self) -> str:
         return str(self)
@@ -143,37 +181,29 @@ class Arena(AllocatorInterface):
 
     """
     mapping: MemoryMapping
-    allocations: t.List[Allocation]
 
     def __init__(self, mapping: MemoryMapping) -> None:
         self.mapping = mapping
-        self.allocations: t.List[Allocation] = []
-        self.alloc_ptr = 0
+        self.head, self.finger, self.tail = make_list(self.mapping.near.length)
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
         return self.mapping, self.allocate(size, alignment)
 
     def allocate(self, size: int, alignment: int) -> Allocation:
-        start_ptr = align(self.alloc_ptr, alignment)
+        start_ptr = align(self.finger.prev.end, alignment)
         end_ptr = start_ptr + size
-        if end_ptr > self.mapping.near.length:
+        if end_ptr > self.finger.next.start:
             raise OutOfSpaceError()
-        alloc = Allocation(self, start_ptr, end_ptr)
-        self.allocations.append(alloc)
-        self.alloc_ptr = end_ptr
+        alloc = self.finger.alloc_before(start_ptr, end_ptr)
         return alloc
 
     async def close(self) -> None:
-        if self.allocations:
+        if self.head.next is not self.finger or self.finger.next is not self.tail:
             raise Exception
         await self.mapping.munmap()
 
     def __str__(self) -> str:
-        if len(self.allocations) < 10:
-            allocations = "[" + ",".join(f"({alloc.start}, {alloc.end})" for alloc in self.allocations) + "]"
-        else:
-            allocations = f"[...{len(self.allocations)}...]"
-        return f"Arena({str(self.mapping)}, {allocations})"
+        return f"Arena({str(self.mapping)})"
 
     def __repr__(self) -> str:
         return str(self)
