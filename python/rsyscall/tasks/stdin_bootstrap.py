@@ -117,7 +117,7 @@ async def stdin_bootstrap(
         access_syscall_sock,
         remote_syscall_fd,
     )
-    allocator = memory.AllocatorClient.make_allocator(base_task)
+    allocator = await memory.AllocatorClient.make_allocator(base_task)
     # we assume our SignalMask is zero'd before being started, so we don't inherit it
     ram = RAM(base_task,
                allocator)

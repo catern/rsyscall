@@ -55,8 +55,23 @@ class Finger:
     prev: Allocation | ListStart
     next: Allocation | ListEnd
 
-    def alloc_before(self, start: int, end: int) -> Allocation:
-        return Allocation.add_after(start, end, self.prev)
+    def alloc_before(self, size: int, alignment: int) -> Allocation:
+        start_ptr = align(self.prev.end, alignment)
+        end_ptr = start_ptr + size
+        if end_ptr > self.next.start:
+            raise OutOfSpaceError()
+        return Allocation.add_after(start_ptr, end_ptr, self.prev)
+
+    def move_to_after(self, node: Allocation | ListStart) -> None:
+        assert not isinstance(node.next, Finger), f"{node}, {self}"
+        # remove from old position
+        self.prev.next = self.next
+        self.next.prev = self.prev
+        # insert into new position
+        self.next = node.next
+        self.prev = node
+        self.next.prev = self
+        self.prev.next = self
 
     @property
     def valid(self) -> bool:
@@ -187,15 +202,10 @@ class Arena(AllocatorInterface):
         self.head, self.finger, self.tail = make_list(self.mapping.near.length)
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
-        return self.mapping, self.allocate(size, alignment)
+        return self.mapping, self.finger.alloc_before(size, alignment)
 
     def allocate(self, size: int, alignment: int) -> Allocation:
-        start_ptr = align(self.finger.prev.end, alignment)
-        end_ptr = start_ptr + size
-        if end_ptr > self.finger.next.start:
-            raise OutOfSpaceError()
-        alloc = self.finger.alloc_before(start_ptr, end_ptr)
-        return alloc
+        return self.finger.alloc_before(size, alignment)
 
     async def close(self) -> None:
         if self.head.next is not self.finger or self.finger.next is not self.tail:
@@ -229,56 +239,59 @@ def align(num: int, alignment: int) -> int:
         return num
 
 class BumpAllocator(AllocatorInterface):
-    """An infinite bump allocator relying on virtual memory
+    """A simple bump allocator relying on virtual memory for efficiency
 
-    This allocator is a simple bump allocator, indefinitely incrementing our allocation pointer as
-    new allocation requests come in.  We just keep incrementing indefinitely through virtual memory,
-    allocating new memory as we go.  To avoid inefficient memory usage, when all the allocations in
-    a page have been freed, we unmap that page to return it to the OS.  This has various nice
-    attributes, and given our allocation patterns, puts reasonable bounds on fragmentation.
+    This allocator is a simple bump allocator, incrementing an allocation pointer through a large
+    area of virtual memory as new allocation requests come in. To avoid inefficient memory usage,
+    when all the allocations in a page have been freed, we tell the OS to free that page with
+    MADV_REMOVE.
+
+    When we reach the end of the virtual memory space, we wrap around back to the start.  Thus we
+    must take care to skip over already-in-use space.
+
+    The fraction of space which is allocated goes to 0 as the virtual memory area increases in size.
+    Thus allocation is no more expensive than stack allocation.
+
+    The efficiency/fragmentation is bounded by the ratio of the smallest allocation to the page
+    size.  The fact that long-used memory tends to be allocated all at once is especially good for
+    fragmentation in this allocator, since such memory will essentially always be allocated in the
+    same page.
 
     Missing features:
 
-    - To be robust we should handle exhausting virtual address space by wrapping around; when we do
-      that we'll need to skip over allocated pages.
+    - Currently we don't actually MADV_REMOVE pages when their last allocation is removed.
 
-    - Currently we don't actually unmap pages when their last allocation is removed.
-
-    - Currently we don't actually allocate new memory once we run out.
+    - Our references aren't weak, so with our current freeing design, allocations are never removed!
 
     """
     def __init__(self, task: Task) -> None:
         self.task = task
-        self.full_mapping: t.Optional[MemoryMapping] = None
-        self.alloc_index = 0
-        self.cur_arena: Arena
+        self.full_mapping: MemoryMapping
+        self.start: ListStart
+        self.finger: Finger
+        self.end: ListEnd
 
-    async def get_next_arena(self, pages: int) -> Arena:
-        if self.full_mapping is None:
-            self.full_mapping = await self.task.mmap(2**32, PROT.READ|PROT.WRITE, MAP.SHARED)
-        if self.alloc_index + pages > self.full_mapping.near.pages:
-            # unfortunately we'll need a lock or something here, to avoid multiple attempts to
-            # allocate more memory, which will uglify this...
-            raise NotImplementedError("we allocated 4 GB of data and I neglected to implement allocating more")
-        arena = Arena(MemoryMapping(
-            self.task, self.full_mapping.near[self.alloc_index:self.alloc_index+pages],
-            self.full_mapping.file))
-        self.alloc_index += pages
-        return arena
+    @classmethod
+    async def make(cls, task: Task, size: int) -> BumpAllocator:
+        self = cls(task)
+        self.full_mapping = await self.task.mmap(size, PROT.READ|PROT.WRITE, MAP.SHARED)
+        self.start, self.finger, self.end = make_list(self.full_mapping.near.length)
+        return self
 
     async def malloc(self, size: int, alignment: int) -> t.Tuple[MemoryMapping, Allocation]:
-        if self.full_mapping is None:
-            self.cur_arena = await self.get_next_arena(1)
-            assert self.full_mapping is not None
-        if alignment > self.full_mapping.near.page_size:
-            raise Exception("can't handle alignment", alignment, "more than max alignment", self.full_mapping.near.page_size)
-        try:
-            return self.cur_arena.mapping, self.cur_arena.allocate(size, alignment)
-        except OutOfSpaceError as e:
-            # get a new arena with enough pages to fit this;
-            # we don't need to bother with alignment since it will be guaranteed to be page-aligned
-            self.cur_arena = await self.get_next_arena(ceildiv(size, self.full_mapping.near.page_size))
-            return self.cur_arena.mapping, self.cur_arena.allocate(size, alignment)
+        search_start = self.finger.prev
+        while True:
+            try:
+                return self.full_mapping, self.finger.alloc_before(size, alignment)
+            except OutOfSpaceError:
+                # stop searching if we're back where we started
+                if self.finger.next is search_start:
+                    raise OutOfSpaceError("we ran out of virtual memory")
+                # move the finger forward, wrapping around back to the start if we hit the end
+                if isinstance(self.finger.next, ListEnd):
+                    self.finger.move_to_after(self.start)
+                else:
+                    self.finger.move_to_after(self.finger.next)
 
 class AllocatorClient(AllocatorInterface):
     """A task-specific allocator, to protect us from getting memory back for the wrong address space.
@@ -298,8 +311,8 @@ class AllocatorClient(AllocatorInterface):
                             self.task.address_space, self.shared_allocator.task.address_space)
 
     @staticmethod
-    def make_allocator(task: Task) -> AllocatorClient:
-        return AllocatorClient(task, BumpAllocator(task))
+    async def make_allocator(task: Task) -> AllocatorClient:
+        return AllocatorClient(task, await BumpAllocator.make(task, 2**32))
 
     def inherit(self, task: Task) -> AllocatorClient:
         return AllocatorClient(task, self.shared_allocator)

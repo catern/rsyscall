@@ -159,7 +159,7 @@ async def _setup_stub(
         access_syscall_sock,
         remote_syscall_fd,
     )
-    allocator = memory.AllocatorClient.make_allocator(base_task)
+    allocator = await memory.AllocatorClient.make_allocator(base_task)
     base_task.sigmask = Sigset({SIG(bit) for bit in rsyscall.struct.bits(describe_struct.sigmask)})
     ram = RAM(base_task,
               allocator)

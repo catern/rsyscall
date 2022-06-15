@@ -95,7 +95,7 @@ async def _make_local_process() -> Process:
         far.PidNamespace(pid.id),
     )
     task.sysif = LocalSyscall(task)
-    ram = RAM(task, memory.AllocatorClient.make_allocator(task))
+    ram = RAM(task, await memory.AllocatorClient.make_allocator(task))
     epfd = await task.epoll_create()
     async def wait_readable():
         logger.debug("wait_readable(%s)", epfd.near.number)
