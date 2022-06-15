@@ -11,11 +11,11 @@ class TestPointer(TrioTestCase):
 
     async def test_use_after_free_allocation(self) -> None:
         buf = await self.process.malloc(bytes, 16)
-        buf.allocation.free()
+        buf.allocation.free(buf.mapping)
         with self.assertRaises(UseAfterFreeError):
             buf.near
         buf = await self.process.ptr(b'foo')
-        buf.allocation.free()
+        buf.allocation.free(buf.mapping)
         with self.assertRaises(UseAfterFreeError):
             buf.near
         str(buf)

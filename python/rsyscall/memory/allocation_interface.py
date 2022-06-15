@@ -2,6 +2,7 @@
 from __future__ import annotations
 import abc
 import typing as t
+from rsyscall.sys.mman import MemoryMapping
 
 class UseAfterFreeError(Exception):
     pass
@@ -47,7 +48,7 @@ class AllocationInterface:
         """
         pass
     @abc.abstractmethod
-    def free(self) -> None:
-        "Invalidate this allocation and return its range for re-allocation; also called automatically on __del__."
+    def free(self, mapping: MemoryMapping) -> None:
+        "Invalidate this allocation and return its range for re-allocation; must be called explicitly."
         pass
 

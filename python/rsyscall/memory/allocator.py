@@ -13,7 +13,7 @@ from __future__ import annotations
 from dneio import RequestQueue, reset
 from rsyscall._raw import ffi, lib # type: ignore
 from rsyscall.far import AddressSpace
-from rsyscall.near.sysif import SyscallInterface
+from rsyscall.near.sysif import SyscallError
 import outcome
 import rsyscall.far as far
 import rsyscall.handle as handle
@@ -26,7 +26,8 @@ import contextlib
 import typing as t
 import logging
 from dataclasses import dataclass
-from rsyscall.sys.mman import PROT, MAP, MemoryMapping
+from rsyscall.sys.mman import PROT, MAP, MADV, MemoryMapping
+from dneio import reset
 logger = logging.getLogger(__name__)
 
 @dataclass(eq=False)
@@ -73,6 +74,15 @@ class Finger:
         self.next.prev = self
         self.prev.next = self
 
+    # Finger.start/end are only used for Allocation.free
+    @property
+    def start(self) -> int:
+        return self.next.start
+
+    @property
+    def end(self) -> int:
+        return self.prev.end
+
     @property
     def valid(self) -> bool:
         return False
@@ -112,11 +122,10 @@ class Allocation(AllocationInterface):
             )
         return self.start
 
-    def free(self) -> None:
-        if self.valid:
-            self.valid = False
-            self.prev.next = self.next
-            self.next.prev = self.prev
+    def _remove(self) -> None:
+        self.valid = False
+        self.prev.next = self.next
+        self.next.prev = self.prev
 
     def size(self) -> int:
         return self.end - self.start
@@ -135,7 +144,7 @@ class Allocation(AllocationInterface):
         if not self.valid:
             raise Exception("can't split freed allocation")
         splitpoint = self.start+size
-        self.free()
+        self._remove()
         first = Allocation.add_after(self.start, splitpoint, self.prev, valid=False)
         second = Allocation.add_after(splitpoint, self.end, first, valid=False)
         first.valid = True
@@ -153,11 +162,47 @@ class Allocation(AllocationInterface):
             raise Exception("can't merge an allocation with anything other than its immediate neighbor!")
         if self.end != other.start:
             raise Exception("to merge allocations, our end", self.end, "must equal their start", other.start)
-        self.free()
-        other.free()
+        self._remove()
+        other._remove()
         new = Allocation.add_after(self.start, other.end, self.prev, valid=False)
         new.valid = True
         return new
+
+    def free(self, mapping: MemoryMapping) -> None:
+        self.valid = False
+        def pg(offset: int) -> int:
+            "Convert this bytes-offset in this mapping into a page-offset in the mapping"
+            return offset // mapping.near.page_size
+        # Now that this allocation is freed, everything in this (exclusive) range is free.
+        # (Some of it may have been free before this allocation is freed.)
+        free_start, free_end = pg(self.prev.end)+1, pg(self.next.start)
+        # We could just MADV_FREE all of free_range, but that would cause us to do excessive syscalls.
+        # Instead we'll also calculate what pages *may* have become free due to freeing this allocation,
+        # which is exactly the range of pages covered by this allocation:
+        changed_start, changed_end = pg(self.start), pg(self.end)+1
+        # Now, the intersection of these two ranges is exactly the range of pages which have just become free
+        # and therefore haven't yet had MADV_FREE called on them.
+        # The start of the intersection is the higher of the two start addresses...
+        just_freed_start = max(free_start, changed_start)
+        # ...and the end of the intersection is the lower of the two end addresses.
+        just_freed_end = min(free_end, changed_end)
+        # asynchronously, if there's something in the intersection, MADV.REMOVE it
+        async def final_free():
+            try:
+                if just_freed_start < just_freed_end:
+                    await mapping[just_freed_start:just_freed_end].madvise(MADV.REMOVE)
+            except OSError:
+                logger.exception("Error while returning memory to the OS")
+                # don't care beyond this, it's harmless
+            except SyscallError:
+                # a SyscallError can easily happen, if we free in a process that's dead
+                # TODO try again with the main mapping in Arena, which shouldn't SyscallError
+                pass
+            # only now do we actually remove this allocation from the linked list;
+            # if we remove the allocation before MADV.REMOVE completes,
+            # we might allocate in that space, which will later be MADV.REMOVEd and deleted
+            self._remove()
+        reset(final_free())
 
     def __str__(self) -> str:
         if self.valid:
@@ -167,10 +212,6 @@ class Allocation(AllocationInterface):
 
     def __repr__(self) -> str:
         return str(self)
-
-    def __del__(self) -> None:
-        # TODO this is actually not going to work, because the Arena stores references to the allocation
-        self.free()
 
 class OutOfSpaceError(Exception):
     "Raised by malloc if the allocation request couldn't be satisfied."
@@ -256,12 +297,6 @@ class BumpAllocator(AllocatorInterface):
     size.  The fact that long-used memory tends to be allocated all at once is especially good for
     fragmentation in this allocator, since such memory will essentially always be allocated in the
     same page.
-
-    Missing features:
-
-    - Currently we don't actually MADV_REMOVE pages when their last allocation is removed.
-
-    - Our references aren't weak, so with our current freeing design, allocations are never removed!
 
     """
     def __init__(self, task: Task) -> None:

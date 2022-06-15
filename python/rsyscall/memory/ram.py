@@ -139,7 +139,7 @@ class RAM:
         try:
             return Pointer(mapping, serializer, allocation, typ)
         except:
-            allocation.free()
+            allocation.free(mapping)
             raise
 
     async def _write_to_pointer(self, ptr: Pointer[T], data: T, data_bytes: bytes) -> WrittenPointer[T]:

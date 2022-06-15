@@ -67,6 +67,9 @@ class MemoryMapping:
     async def madvise(self, advice: MADV) -> None:
         await _madvise(self.task.sysif, self.near, advice)
 
+    def __getitem__(self, key: t.Union[slice, int]) -> MemoryMapping:
+        return MemoryMapping(self.task, self.near[key], self.file)
+
     def for_task(self, task: MemoryMappingTask) -> MemoryMapping:
         if task.address_space != self.task.address_space:
             raise rsyscall.far.AddressSpaceMismatchError()

@@ -214,15 +214,12 @@ class Pointer(t.Generic[T]):
         """
         if self.valid:
             self.valid = False
-            self.allocation.free()
+            self.allocation.free(self.mapping)
 
     def __del__(self) -> None:
-        # This isn't strictly necessary because the allocation will free itself on __del__.
-        # But, that will only happen when *all* pointers referring to the allocation are collected;
-        # not just the valid one.
-        # So, this ensures GC is a bit more prompt.
-        # Oh, wait. The real reason we need this is because the Arena stores references to the allocation.
-        # TODO We should fix that.
+        # This is how we garbage-collect memory.
+        # Note that if the pointer doesn't call free, the underlying allocation will never be freed.
+        # (because it's part of a doubly-linked list so there are always references to it)
         self.free()
 
     def split_from_end(self, size: int, alignment: int) -> t.Tuple[Pointer, Pointer]:

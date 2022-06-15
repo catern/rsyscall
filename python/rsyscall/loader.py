@@ -91,7 +91,7 @@ class StaticAllocation(AllocationInterface):
     def merge(self, other: AllocationInterface) -> AllocationInterface:
         raise Exception("can't merge")
 
-    def free(self) -> None:
+    def free(self, mapping: MemoryMapping) -> None:
         pass
 
 class NativeFunctionSerializer(Serializer[NativeFunction]):

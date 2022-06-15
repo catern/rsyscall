@@ -49,7 +49,7 @@ class SpanAllocation(AllocationInterface):
         else:
             raise Exception("can't merge spans over two different allocations")
 
-    def free(self) -> None:
+    def free(self, mapping) -> None:
         pass
 
 def to_span(ptr: Pointer) -> Pointer:
