@@ -2,3 +2,5 @@ cffi
 trio
 h11
 typeguard
+attrs
+sniffio
