@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from rsyscall.command import Command
 from rsyscall.handle.pointer import Pointer, WrittenPointer
 from rsyscall.linux.futex import FutexNode
+from rsyscall.path import Path
 from rsyscall.sched import Stack, CLONE, _clone, _unshare
 from rsyscall.signal import SIG, Siginfo, _kill
 from rsyscall.sys.resource import PRIO, _setpriority, _getpriority
@@ -50,6 +51,15 @@ class Pid:
 
     async def getpriority(self) -> int:
         return (await _getpriority(self.task.sysif, PRIO.PROCESS, self.near.id))
+
+    def as_proc_path(self) -> Path:
+        """Return the /proc/{pid} path pointing to this process.
+
+        This should be used with care, but it's sometimes useful.
+
+        """
+        pid = self.near.id
+        return Path(f"/proc/{pid}")
 
     def __repr__(self) -> str:
         name = type(self).__name__
