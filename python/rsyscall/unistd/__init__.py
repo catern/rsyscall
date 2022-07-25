@@ -91,19 +91,20 @@ class FSFileDescriptor(BaseFileDescriptor):
         with ptr.borrow(self.task):
             await _faccessat(self.task.sysif, self.near, ptr.near, mode, flags)
 
-    async def openat(self: T_fd, path: WrittenPointer[t.Union[str, os.PathLike]], flags: O, mode=0o644) -> T_fd:
+    @t.overload
+    async def openat(self: T_fd, path: str | os.PathLike, flags: O, mode=0o644) -> T_fd: ...
+    @t.overload
+    async def openat(self: T_fd, path: WrittenPointer[str | os.PathLike], flags: O, mode=0o644) -> T_fd: ...
+
+    async def openat(self: T_fd, path: str | os.PathLike | WrittenPointer[str | os.PathLike], flags: O, mode=0o644) -> T_fd:
         """open and possibly create a file
 
         manpage: openat(2)
         """
-        self._validate()
-        with path.borrow(self.task) as path_n:
-            try:
-                fd = await _openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
-            except OSError as exn:
-                exn.filename = path.value
-                raise
-            return self.task.make_fd_handle(fd)
+        if isinstance(path, WrittenPointer):
+            return await openat(self, path, flags, mode)
+        else:
+            return await openat(self, await self.task.ptr(path), flags, mode)
 
     async def mkdirat(self, path: WrittenPointer[t.Union[str, os.PathLike]], mode=0o755) -> None:
         """create a directory
@@ -245,14 +246,16 @@ class FSTask(FileDescriptorTask[T_fd]):
                 exn.filename = path.value
                 raise
 
-    async def open(self, path: WrittenPointer[t.Union[str, os.PathLike]], flags: O, mode=0o644) -> T_fd:
-        with path.borrow(self) as path_n:
-            try:
-                fd = await _openat(self.sysif, None, path_n, flags|O.CLOEXEC, mode)
-            except FileNotFoundError as exn:
-                exn.filename = path.value
-                raise
-            return self.make_fd_handle(fd)
+    @t.overload
+    async def open(self, path: str | os.PathLike, flags: O, mode=0o644) -> T_fd: ...
+    @t.overload
+    async def open(self, path: WrittenPointer[str | os.PathLike], flags: O, mode=0o644) -> T_fd: ...
+
+    async def open(self, path: str | os.PathLike | WrittenPointer[str | os.PathLike], flags: O, mode=0o644) -> T_fd:
+        if isinstance(path, WrittenPointer):
+            return await open(self, path, flags, mode)
+        else:
+            return await open(self, await self.ptr(path), flags, mode)
 
     async def mkdir(self, path: WrittenPointer[t.Union[str, os.PathLike]], mode=0o755) -> None:
         with path.borrow(self) as path_n:
@@ -304,6 +307,30 @@ class FSTask(FileDescriptorTask[T_fd]):
         with target.borrow(self) as target_n:
             with linkpath.borrow(self) as linkpath_n:
                 await _symlinkat(self.sysif, target_n, None, linkpath_n)
+
+#### Pointer-taking syscalls ####
+async def open(self: FSTask, path: WrittenPointer[t.Union[str, os.PathLike]], flags: O, mode=0o644) -> T_fd:
+    with path.borrow(self) as path_n:
+        try:
+            fd = await _openat(self.sysif, None, path_n, flags|O.CLOEXEC, mode)
+        except FileNotFoundError as exn:
+            exn.filename = path.value
+            raise
+        return self.make_fd_handle(fd)
+
+async def openat(self: T_fd, path: WrittenPointer[t.Union[str, os.PathLike]], flags: O, mode=0o644) -> T_fd:
+    """open and possibly create a file
+
+    manpage: openat(2)
+    """
+    self._validate()
+    with path.borrow(self.task) as path_n:
+        try:
+            fd = await _openat(self.task.sysif, self.near, path_n, flags|O.CLOEXEC, mode)
+        except OSError as exn:
+            exn.filename = path.value
+            raise
+        return self.task.make_fd_handle(fd)
 
 #### Raw syscalls ####
 import rsyscall.near.types as near
