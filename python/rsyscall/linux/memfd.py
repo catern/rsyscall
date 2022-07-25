@@ -14,14 +14,27 @@ class MFD(enum.IntFlag):
     
 #### Classes ####
 from rsyscall.handle.fd import T_fd, FileDescriptorTask
-if t.TYPE_CHECKING:
-    from rsyscall.handle.pointer import WrittenPointer
+from rsyscall.handle.pointer import WrittenPointer
 
 class MemfdTask(FileDescriptorTask[T_fd]):
-    async def memfd_create(self, name: WrittenPointer[t.Union[str, os.PathLike]], flags: MFD=MFD.NONE) -> T_fd:
-        with name.borrow(self) as name_n:
-            fd = await _memfd_create(self.sysif, name_n, flags|MFD.CLOEXEC)
-            return self.make_fd_handle(fd)
+    @t.overload
+    async def memfd_create(self, name: str | os.PathLike, flags: MFD=MFD.NONE) -> T_fd: ...
+    @t.overload
+    async def memfd_create(self, name: WrittenPointer[str | os.PathLike], flags: MFD=MFD.NONE) -> T_fd: ...
+
+    async def memfd_create(self, name: str | os.PathLike | WrittenPointer[str | os.PathLike], flags: MFD=MFD.NONE) -> T_fd:
+        if isinstance(name, WrittenPointer):
+            return await memfd_create(self, name, flags=flags)
+        else:
+            return await memfd_create(self, await self.ptr(name), flags=flags)
+
+#### Pointer-taking syscalls ####
+async def memfd_create(task: FileDescriptorTask[T_fd],
+                       name: WrittenPointer[t.Union[str, os.PathLike]], flags: MFD=MFD.NONE) -> T_fd:
+    with name.borrow(task) as name_n:
+        fd = await _memfd_create(task.sysif, name_n, flags|MFD.CLOEXEC)
+        return task.make_fd_handle(fd)
+
 
 #### Raw syscalls ####
 import rsyscall.near.types as near
