@@ -81,11 +81,26 @@ from rsyscall.handle.fd import BaseFileDescriptor
 from rsyscall.handle.pointer import Pointer, ReadablePointer
 
 class GetdentsFileDescriptor(BaseFileDescriptor):
-    async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[ReadablePointer[DirentList], Pointer]:
-        self._validate()
-        with dirp.borrow(self.task) as dirp_n:
-            ret = await _getdents64(self.task.sysif, self.near, dirp_n, dirp.size())
-            return dirp.readable_split(ret)
+    @t.overload
+    async def getdents(self) -> ReadablePointer[DirentList]: ...
+
+    @t.overload
+    async def getdents(self, dirp: Pointer[DirentList]) -> t.Tuple[ReadablePointer[DirentList], Pointer]: ...
+
+    async def getdents(self, dirp: Pointer[DirentList]=None
+                       ) -> ReadablePointer[DirentList] | t.Tuple[ReadablePointer[DirentList], Pointer]:
+        if isinstance(dirp, Pointer):
+            return await getdents(self, dirp)
+        else:
+            valid, rest = await getdents(self, await self.task.malloc(DirentList, 4096))
+            return valid
+
+#### Pointer-taking syscalls ####
+async def getdents(self: BaseFileDescriptor, dirp: Pointer[DirentList]) -> t.Tuple[ReadablePointer[DirentList], Pointer]:
+    self._validate()
+    with dirp.borrow(self.task) as dirp_n:
+        ret = await _getdents64(self.task.sysif, self.near, dirp_n, dirp.size())
+        return dirp.readable_split(ret)
 
 #### Raw syscalls ####
 import rsyscall.near.types as near
